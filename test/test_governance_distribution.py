@@ -204,6 +204,19 @@ def _hermetic_governance_globals(monkeypatch):
     """
     monkeypatch.delenv("KIROCREW_SECURITY_POLICY", raising=False)
     monkeypatch.delenv("KIROCREW_ADMISSION_POLICY", raising=False)
+    # ``_LAST_BUNDLED`` is a module global set by whichever earlier test ran
+    # ``load_security_policy`` with a bundled loader, and it now decides a refresher
+    # branch: bundled outranks home, so a leaked value makes a home grant read as
+    # unreachable. Pinned
+    # to None here so every test states its own bundled tier or has none.
+    monkeypatch.setattr(governance, "_LAST_BUNDLED", None)
+    # Same shape: the absence audit latches once per process, and a leaked True would
+    # make a test asserting on the record read nothing.
+    monkeypatch.setattr(governance, "_ABSENCE_AUDITED", False)
+    monkeypatch.setattr(governance, "_ENV_BENEATH_CENTRAL_WARNED", False)
+    # The intersect audit is latched per tier pair; a leaked pair would make a test
+    # asserting on that record read nothing.
+    monkeypatch.setattr(governance, "_TIER_INTERSECTS_AUDITED", set())
     pd.reset_fetch_window()
     health.reset()
     gp.reset_store()
@@ -1071,24 +1084,45 @@ class TestFetchWindow:
 
 
 class TestLoadSecurityPolicyPrecedence:
-    def test_the_local_env_file_outranks_a_configured_central_source(self, monkeypatch, tmp_path):
-        """Tier 1 is the ROLLBACK LEVER for a bad central push.
+    def test_the_central_source_outranks_the_local_env_file(
+        self, readonly_chain, monkeypatch, tmp_path
+    ):
+        """The env file is a SUBORDINATE: it tightens the fetched ceiling, never wins.
 
-        One document governing every host is the widest blast radius in this model,
-        so an operator recovering from a push needs a channel that outranks the
-        thing that broke and does not wait on the endpoint being fixed.
+        While it outranked the central document the enterprise ceiling was advisory —
+        any account that can set an environment variable could point it at a permissive
+        file and the fleet's ceiling never bound. The identity stays the fetched
+        document's, which is what "central is the authority" means on the wire.
         """
-        local = _write_policy(tmp_path / "local.json", "local-rollback")
+        local = _write_policy(
+            tmp_path / "local.json", "local-file", tools={"mode": "deny", "deny": ["*"]}
+        )
         monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(local))
         monkeypatch.setenv(
             pd.POLICY_URL_ENV, _file_source(tmp_path / "central.json", "central-push")
         )
         ceiling = governance.load_security_policy()
         assert ceiling is not None
-        assert ceiling.identity_issuer == "local-rollback"
-        # Not merely outranked — never fetched, so a broken endpoint cannot even
-        # slow the recovery down.
-        assert pd.read_cache() is None
+        assert ceiling.identity_issuer == "central-push"
+        # Fetched, not short-circuited: the env file no longer stops the central tier
+        # from being consulted at all.
+        assert pd.read_cache() is not None
+
+    def test_the_local_env_file_only_tightens_the_central_ceiling(
+        self, readonly_chain, monkeypatch, tmp_path
+    ):
+        """Subordinate means "may add restrictions", not "is ignored"."""
+        local = _write_policy(
+            tmp_path / "local.json", "local-file", tools={"mode": "deny", "deny": ["danger"]}
+        )
+        monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(local))
+        monkeypatch.setenv(
+            pd.POLICY_URL_ENV, _file_source(tmp_path / "central.json", "central-push")
+        )
+        ceiling = governance.load_security_policy()
+        assert ceiling is not None
+        assert ceiling.identity_issuer == "central-push"
+        assert "danger" in ceiling.controls["tools"].deny
 
     def test_the_central_tier_outranks_the_home_file(self, readonly_chain, monkeypatch, tmp_path):
         """Tiers below are what the fetched document REPLACES."""
@@ -1465,57 +1499,6 @@ _CACHE_PATHS = [
     for prefix in (".kiro/crew", ".kirocrew")
     for leaf in (pd._CACHE_DOC_LEAF, pd._CACHE_META_LEAF)
 ]
-
-
-class TestTierOneOutranksTheCentralSource:
-    """The rollback lever has to win against a live REFRESH, not only against a boot."""
-
-    def test_a_local_policy_file_stops_the_refresh_before_it_fetches(
-        self, transport, install_ceiling, monkeypatch, tmp_path
-    ):
-        seen: list = []
-        source = transport(_static_fetcher(pd.FetchedPolicy(body=_body("pushed")), seen))
-        running = install_ceiling(
-            governance.parse_policy(_doc("running", distribution={"source": source}))
-        )
-        pd._record_installed(_body("running", distribution={"source": source}))
-        monkeypatch.setenv(
-            "KIROCREW_SECURITY_POLICY", str(_write_policy(tmp_path / "rollback.json", "rollback"))
-        )
-
-        outcome = pd.refresh_now()
-
-        assert outcome.status == pd.REFRESH_REJECTED
-        assert "outranks" in outcome.detail
-        assert current_context().governance is running
-        # Not even attempted: the operator gets a reason, not a fetch then a refusal.
-        assert seen == []
-
-    def test_apply_ceiling_refuses_outright_as_the_hard_guard(self, monkeypatch, tmp_path):
-        """Belt to the braces above, so no future path can install over tier 1."""
-        monkeypatch.setenv(
-            "KIROCREW_SECURITY_POLICY", str(_write_policy(tmp_path / "rollback.json", "rollback"))
-        )
-        with pytest.raises(PlatformCompositionError, match="rollback lever"):
-            pd.apply_ceiling(governance.parse_policy(_doc("pushed")))
-
-    def test_an_env_path_that_does_not_exist_is_not_tier_one(self, monkeypatch, tmp_path):
-        """A stale variable naming a deleted file must not freeze the fleet policy."""
-        monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(tmp_path / "gone.json"))
-        assert pd.tier1_local_policy() == ""
-
-    def test_the_background_loop_stops_itself_when_a_rollback_lands(
-        self, install_ceiling, monkeypatch, tmp_path
-    ):
-        """Polling on would fetch and refuse every cycle."""
-        install_ceiling(
-            governance.parse_policy(_doc("running", distribution={"source": _TEST_SOURCE}))
-        )
-        assert pd._Refresher._next_interval(900) == 900
-        monkeypatch.setenv(
-            "KIROCREW_SECURITY_POLICY", str(_write_policy(tmp_path / "rollback.json", "rollback"))
-        )
-        assert pd._Refresher._next_interval(900) == 0
 
 
 class TestFileTransportIsBounded:
@@ -4596,3 +4579,943 @@ class TestPosture:
         assert posture["error_code"] == pd.POSTURE_ERROR_MISCONFIGURED
         assert posture["configured"] is False
         assert host not in json.dumps(posture)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# A refresh replaces one rung, not the whole ladder
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class TestARefreshReComposesTheWholeLadder:
+    """A live refresh must re-run the ladder, not install the fetched document alone.
+
+    Installing the fetch by itself dropped the managed authority ABOVE the central
+    tier and every local restriction BELOW it, so a host tightened at boot found that
+    tightening silently gone at the first successful poll -- a ceiling that loosens
+    itself on a timer, and the one direction this tier must never move on its own.
+    ``apply_ceiling`` therefore routes through ``governance.compose_installed_ceiling``,
+    which re-runs the SAME ``compose_tier_ladder`` boot uses, and validates the COMPOSED
+    result so the floor gates judge what will actually govern.
+
+    The subordinate here always DENIES something the fetched document does not, because
+    that is the only assertion that can tell composition from replacement: an issuer
+    check alone passes under both, since the central document is the authority either
+    way and keeps its identity.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _only_the_tiers_a_test_declares(self, monkeypatch, tmp_path):
+        """Pin every tier this class does not set to ABSENT.
+
+        ``_LAST_BUNDLED`` is a module global that outlives a test -- any earlier
+        ``load_security_policy(bundled_loader=...)`` on this worker leaves a document in
+        it, and ``compose_installed_ceiling`` reads it -- so a test declaring the home
+        tier could silently compose against a stale bundled one instead. The managed
+        path and the home path are pinned for the ordinary reason: a real file on the
+        host running the suite must not decide the answer.
+        """
+        monkeypatch.setattr(governance, "_read_managed_policy", lambda: None)
+        monkeypatch.setattr(governance, "_LAST_BUNDLED", None)
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: tmp_path / "absent-home.json")
+
+    @staticmethod
+    def _central(marker: str = "pushed", **extra: object):
+        """A fetched document, tagged as the central tier the way the loader tags it."""
+        from dataclasses import replace
+
+        return replace(governance.parse_policy(_doc(marker, **extra)), tier=governance.TIER_CENTRAL)
+
+    # ── the tier BELOW: a local restriction must survive the poll ──────────
+
+    def test_apply_ceiling_keeps_an_env_subordinates_denial(
+        self, install_ceiling, monkeypatch, tmp_path
+    ):
+        """The regression itself, at the narrowest seam that can show it."""
+        install_ceiling(governance.parse_policy(_doc("running")))
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY",
+            str(
+                _write_policy(
+                    tmp_path / "local.json",
+                    "local-file",
+                    tools={"mode": "deny", "deny": ["danger"]},
+                )
+            ),
+        )
+
+        pd.apply_ceiling(self._central())
+
+        installed = current_context().governance
+        assert installed.identity_issuer == "pushed", "central is still the authority"
+        assert "danger" in installed.controls["tools"].deny
+
+    def test_apply_ceiling_keeps_a_home_subordinates_denial(
+        self, install_ceiling, monkeypatch, tmp_path
+    ):
+        """The same contract one tier along, since the ladder is shared, not per-tier."""
+        install_ceiling(governance.parse_policy(_doc("running")))
+        home = _write_policy(
+            tmp_path / "home.json", "home-file", tools={"mode": "deny", "deny": ["danger"]}
+        )
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: home)
+
+        pd.apply_ceiling(self._central())
+
+        installed = current_context().governance
+        assert installed.identity_issuer == "pushed"
+        assert "danger" in installed.controls["tools"].deny
+
+    def test_a_local_boot_restriction_survives_a_refresh_too(
+        self, install_ceiling, monkeypatch, tmp_path
+    ):
+        """Composition is not only about scope controls.
+
+        Both documents state ``allow_terminal`` explicitly, so the answer is the
+        intersection rather than a default: the fetched document permits a terminal and
+        the local one does not, and the local answer has to win.
+        """
+        install_ceiling(governance.parse_policy(_doc("running")))
+        home = _write_policy(
+            tmp_path / "home.json", "home-file", boot={"fail_closed": True, "allow_terminal": False}
+        )
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: home)
+
+        pd.apply_ceiling(self._central(boot={"fail_closed": True, "allow_terminal": True}))
+
+        assert current_context().governance.boot.allow_terminal is False
+
+    def test_an_env_subordinates_denial_survives_a_live_refresh(
+        self, transport, install_ceiling, monkeypatch, tmp_path
+    ):
+        """End to end through ``refresh_now``, which is where a real host loses it.
+
+        The boot-time tightening is not re-read by the poller from anywhere else, so if
+        the install path does not recompose, the first successful poll is the moment the
+        restriction disappears.
+        """
+        source = transport(_static_fetcher(pd.FetchedPolicy(body=_body("pushed"))))
+        install_ceiling(governance.parse_policy(_doc("running", distribution={"source": source})))
+        pd._record_installed(_body("running", distribution={"source": source}))
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY",
+            str(
+                _write_policy(
+                    tmp_path / "local.json",
+                    "local-file",
+                    tools={"mode": "deny", "deny": ["danger"]},
+                )
+            ),
+        )
+
+        outcome = pd.refresh_now()
+
+        assert outcome.status == pd.REFRESH_APPLIED
+        installed = current_context().governance
+        assert installed.identity_issuer == "pushed"
+        assert "danger" in installed.controls["tools"].deny
+
+    def test_a_home_subordinates_denial_survives_a_live_refresh(
+        self, transport, install_ceiling, monkeypatch, tmp_path
+    ):
+        source = transport(_static_fetcher(pd.FetchedPolicy(body=_body("pushed"))))
+        install_ceiling(governance.parse_policy(_doc("running", distribution={"source": source})))
+        pd._record_installed(_body("running", distribution={"source": source}))
+        home = _write_policy(
+            tmp_path / "home.json", "home-file", tools={"mode": "deny", "deny": ["danger"]}
+        )
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: home)
+
+        outcome = pd.refresh_now()
+
+        assert outcome.status == pd.REFRESH_APPLIED
+        installed = current_context().governance
+        assert installed.identity_issuer == "pushed"
+        assert "danger" in installed.controls["tools"].deny
+
+    # ── the tier ABOVE: the managed authority must outrank the fetch ───────
+
+    def test_apply_ceiling_cannot_install_a_looser_ceiling_over_the_managed_tier(
+        self, install_ceiling, monkeypatch
+    ):
+        """Managed outranks central, and a refresh is not a way around that.
+
+        The managed profile is the only channel a standard user cannot write, so a
+        refresh that installed the fetch alone would let whoever controls the central
+        endpoint erase the fleet's highest authority on a timer.
+        """
+        install_ceiling(governance.parse_policy(_doc("running")))
+        monkeypatch.setattr(
+            governance,
+            "_read_managed_policy",
+            lambda: _doc("mdm", tools={"mode": "deny", "deny": ["danger"]}),
+        )
+
+        pd.apply_ceiling(self._central())
+
+        installed = current_context().governance
+        assert installed.tier == governance.TIER_MANAGED, "the authority is still the managed tier"
+        assert installed.identity_issuer == "mdm"
+        assert "danger" in installed.controls["tools"].deny
+
+    def test_a_managed_authority_survives_a_live_refresh(
+        self, transport, install_ceiling, monkeypatch
+    ):
+        source = transport(_static_fetcher(pd.FetchedPolicy(body=_body("pushed"))))
+        install_ceiling(governance.parse_policy(_doc("running", distribution={"source": source})))
+        pd._record_installed(_body("running", distribution={"source": source}))
+        monkeypatch.setattr(
+            governance,
+            "_read_managed_policy",
+            lambda: _doc("mdm", tools={"mode": "deny", "deny": ["danger"]}),
+        )
+
+        outcome = pd.refresh_now()
+
+        assert outcome.status == pd.REFRESH_APPLIED
+        installed = current_context().governance
+        assert installed.tier == governance.TIER_MANAGED
+        assert "danger" in installed.controls["tools"].deny
+
+    def test_the_ladder_is_re_run_whole_not_one_rung_at_a_time(
+        self, install_ceiling, monkeypatch, tmp_path
+    ):
+        """Managed ABOVE and a local tier BELOW, in one install.
+
+        Either restriction surviving alone could be an accident of which rung the code
+        happened to keep; both surviving together is the ladder.
+        """
+        install_ceiling(governance.parse_policy(_doc("running")))
+        monkeypatch.setattr(
+            governance,
+            "_read_managed_policy",
+            lambda: _doc("mdm", tools={"mode": "deny", "deny": ["from-managed"]}),
+        )
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY",
+            str(
+                _write_policy(
+                    tmp_path / "local.json",
+                    "local-file",
+                    tools={"mode": "deny", "deny": ["from-env"]},
+                )
+            ),
+        )
+
+        pd.apply_ceiling(self._central())
+
+        installed = current_context().governance
+        assert installed.tier == governance.TIER_MANAGED
+        deny = installed.controls["tools"].deny
+        assert "from-managed" in deny
+        assert "from-env" in deny
+
+    # ── and the unconfigured host pays nothing ─────────────────────────────
+
+    def test_compose_installed_ceiling_returns_the_central_document_untouched_when_alone(self):
+        """No other tier means no composition -- not a rebuilt equal-looking ceiling.
+
+        Identity rather than equality, because "unchanged" is the promise made to every
+        standalone host: the fetched document IS the installed one.
+        """
+        central = self._central()
+        assert governance.compose_installed_ceiling(central) is central
+
+    def test_apply_ceiling_installs_the_central_document_unchanged_when_alone(
+        self, install_ceiling
+    ):
+        install_ceiling(governance.parse_policy(_doc("running")))
+        central = self._central()
+        pd.apply_ceiling(central)
+        assert current_context().governance is central
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# A MANAGED-declared source is not environment-redirectable
+# ──────────────────────────────────────────────────────────────────────────
+
+#: The managed twin of ``_DECLARED``. ``managed`` is set by the LOADER
+#: (``_managed_ceiling``), never parsed from a document, so it is written out here
+#: rather than round-tripped through ``from_dict`` -- which is itself the subject of
+#: ``test_a_document_cannot_declare_itself_managed`` below.
+_MANAGED_DECLARED = governance.PolicyDistribution(
+    source="https://mdm.corp.example/policy.json",
+    refresh_interval_secs=900,
+    timeout_secs=7.0,
+    max_cache_age_secs=3600,
+    on_unavailable=governance.UNAVAILABLE_FAIL_CLOSED,
+    managed=True,
+)
+
+#: A plausible redirect target. Distinctive enough that a substring assertion about
+#: the log line cannot pass by accident.
+_ATTACKER_URL = "https://redirect.attacker.example/permissive-policy.json"
+
+#: A managed declaration that pins the CADENCE but names no address. Legitimate, and
+#: the shape that exposed the drop: with no source of its own there is no fleet
+#: choice to protect, so ignoring the environment here switched the central tier off
+#: instead of hardening it.
+_MANAGED_DECLARED_NO_SOURCE = governance.PolicyDistribution(
+    refresh_interval_secs=900,
+    timeout_secs=7.0,
+    max_cache_age_secs=3600,
+    on_unavailable=governance.UNAVAILABLE_FAIL_CLOSED,
+    managed=True,
+)
+
+
+class TestAManagedSourceCannotBeRedirectedByTheEnvironment:
+    """The managed tier declares the source, so the environment does not get a vote.
+
+    Honouring ``KIROCREW_POLICY_URL`` against a managed declaration would let any
+    account that can set a variable choose which document becomes the fleet ceiling
+    -- the exact redirection the managed tier exists to prevent, and enough to strip
+    every centrally supplied restriction whenever the managed document delegates the
+    real policy to a fetched one.
+
+    The refusal is an IGNORE, not a raise: raising would hand an unprivileged account
+    a denial-of-service lever over a managed host, and the security goal is only that
+    the override cannot take EFFECT.
+    """
+
+    def test_policy_url_cannot_redirect_a_managed_source(self, monkeypatch):
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        resolved = pd.resolve_distribution(_MANAGED_DECLARED)
+        assert resolved.source == _MANAGED_DECLARED.source
+        assert _ATTACKER_URL not in resolved.source
+
+    @pytest.mark.parametrize(
+        "env_var,raw,attr",
+        [
+            (pd.POLICY_URL_ENV, _ATTACKER_URL, "source"),
+            (pd.POLICY_REFRESH_ENV, "60", "refresh_interval_secs"),
+            (pd.POLICY_TIMEOUT_ENV, "0.5", "timeout_secs"),
+            (pd.POLICY_MAX_AGE_ENV, "99999999", "max_cache_age_secs"),
+            (pd.POLICY_UNAVAILABLE_ENV, governance.UNAVAILABLE_DEGRADE, "on_unavailable"),
+        ],
+    )
+    def test_every_ignored_variable_leaves_the_managed_pin_intact(
+        self, monkeypatch, env_var, raw, attr
+    ):
+        """All five, not just the URL.
+
+        ``on_unavailable`` matters as much as the address: flipping a managed
+        ``fail_closed`` to ``degrade`` turns "refuse to run without the fleet ceiling"
+        into "run without it and log", which reaches the same place as a redirect.
+        ``max_cache_age_secs`` is the same lever spelled as staleness.
+        """
+        monkeypatch.setenv(env_var, raw)
+        resolved = pd.resolve_distribution(_MANAGED_DECLARED)
+        assert getattr(resolved, attr) == getattr(_MANAGED_DECLARED, attr)
+        assert resolved == _MANAGED_DECLARED
+
+    def test_the_override_is_ignored_rather_than_refused(self, monkeypatch):
+        # No exception, and the source is still the managed one -- the two halves of
+        # "ignored". Identity, not equality: nothing is rebuilt, the declaration is
+        # returned unchanged.
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        monkeypatch.setenv(pd.POLICY_UNAVAILABLE_ENV, governance.UNAVAILABLE_DEGRADE)
+        assert pd.resolve_distribution(_MANAGED_DECLARED) is _MANAGED_DECLARED
+
+    def test_a_malformed_ignored_value_is_also_not_a_raise(self, monkeypatch):
+        """A value that normally aborts boot must not become a DoS lever here.
+
+        ``KIROCREW_POLICY_REFRESH_SECS=15m`` raises on an unmanaged source -- an
+        operator who wrote it asked for a refresh and must be told. On a MANAGED
+        source the variable is not read at all, so the same typo (or a deliberate
+        one from an unprivileged account) cannot stop the host from booting.
+        """
+        monkeypatch.setenv(pd.POLICY_REFRESH_ENV, "15m")
+        assert pd.resolve_distribution(_MANAGED_DECLARED) == _MANAGED_DECLARED
+
+    def test_an_unset_environment_warns_about_nothing(self, monkeypatch, caplog):
+        # Guards against a log line on every managed boot: the warning is about an
+        # ATTEMPT, and a fleet with no override set made none.
+        with caplog.at_level(logging.WARNING, logger=_ENGINE_MODULE):
+            assert pd.resolve_distribution(_MANAGED_DECLARED) == _MANAGED_DECLARED
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    def test_the_warning_names_the_variable(self, monkeypatch, caplog):
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        with caplog.at_level(logging.WARNING, logger=_ENGINE_MODULE):
+            pd.resolve_distribution(_MANAGED_DECLARED)
+        emitted = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
+        # An ignored setting that is ignored SILENTLY looks like the setting worked,
+        # so the operator has to be told which variable had no effect.
+        assert pd.POLICY_URL_ENV in emitted
+
+    def test_the_warning_does_not_carry_the_attempted_value(self, monkeypatch, caplog):
+        """Names only, never values: the attempted URL may itself be a credential.
+
+        A pre-signed address carries its own authorisation in the query string, and
+        this log ring is read by the posture viewer -- so echoing the value back is
+        how a rejected override becomes a credential leak.
+        """
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        monkeypatch.setenv(pd.POLICY_HEADERS_ENV, '{"Authorization": "Bearer leak-me"}')
+        with caplog.at_level(logging.DEBUG, logger=_ENGINE_MODULE):
+            pd.resolve_distribution(_MANAGED_DECLARED)
+        emitted = "\n".join(r.getMessage() + (pd_format_exc(r) or "") for r in caplog.records)
+        assert _ATTACKER_URL not in emitted
+        assert "redirect.attacker.example" not in emitted
+        assert "Bearer leak-me" not in emitted
+
+    def test_a_document_cannot_declare_itself_managed(self):
+        """``from_dict`` never sets the flag -- a document claiming it is refused.
+
+        A parsed ``managed: true`` would be a document asserting its own
+        un-overridability, which is a property of the CHANNEL it arrived on and not
+        of its contents. ``distribution`` is ``additionalProperties:false``, so the
+        key is rejected outright rather than quietly dropped -- which also means a
+        fleet that tried it is told, instead of believing it worked.
+        """
+        with pytest.raises(PlatformCompositionError, match="managed"):
+            governance.PolicyDistribution.from_dict(
+                {"source": "https://config.corp.example/policy.json", "managed": True}
+            )
+
+    def test_a_parsed_declaration_is_never_managed(self):
+        parsed = governance.PolicyDistribution.from_dict(
+            {"source": "https://config.corp.example/policy.json"}
+        )
+        assert parsed.managed is False
+        # And the whole-document path agrees, so no parse route sets the flag.
+        ceiling = governance.parse_policy(
+            _doc("authored", distribution={"source": "https://config.corp.example/policy.json"})
+        )
+        assert ceiling.distribution.managed is False
+
+    def test_a_non_managed_declaration_still_honours_the_env_override(self, monkeypatch):
+        """The essential negative: the refusal is scoped to the MANAGED tier only.
+
+        Without this, "ignore the environment" could have been implemented for every
+        declaration -- which would break the ordinary two-channel split, where
+        whatever provisions the host owns the address and the document owns the
+        cadence, and would strand every standalone operator who retunes a host with
+        a variable.
+        """
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        resolved = pd.resolve_distribution(_DECLARED)
+        assert resolved.source == _ATTACKER_URL
+        assert resolved.managed is False
+
+    def test_a_source_less_managed_block_never_takes_the_address_from_the_environment(
+        self, monkeypatch
+    ):
+        """The pin is on the ADDRESS, whether or not the fleet named one.
+
+        An earlier revision let ``KIROCREW_POLICY_URL`` supply the source when the
+        managed block declared only the cadence, on the theory that there was no
+        fleet choice to redirect away from. That was the hole: the environment is
+        the local account's, so on a fleet whose managed profile delegated the real
+        controls to a fetched document, that account could point the fetch at a
+        document of its own and supply every control the profile left out. A managed
+        declaration that wants a central document has to name it.
+        """
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        resolved = pd.resolve_distribution(_MANAGED_DECLARED_NO_SOURCE)
+        assert resolved.source == "", "the environment's address is refused"
+        assert not resolved.enabled, "no source means the central tier stays off"
+        assert resolved.managed is True
+
+    def test_a_source_less_managed_block_still_pins_its_declared_cadence(self, monkeypatch):
+        """The settings the fleet DID declare stay pinned along with the address."""
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _TEST_SOURCE)
+        monkeypatch.setenv(pd.POLICY_REFRESH_ENV, "60")
+        monkeypatch.setenv(pd.POLICY_UNAVAILABLE_ENV, governance.UNAVAILABLE_DEGRADE)
+        resolved = pd.resolve_distribution(_MANAGED_DECLARED_NO_SOURCE)
+        assert resolved.source == ""
+        assert resolved.refresh_interval_secs == 900
+        assert resolved.on_unavailable == governance.UNAVAILABLE_FAIL_CLOSED
+        assert resolved.managed is True
+
+    def test_a_source_less_managed_block_with_no_env_url_stays_inert(self):
+        """No address anywhere is not a redirect -- it is simply no central tier."""
+        resolved = pd.resolve_distribution(_MANAGED_DECLARED_NO_SOURCE)
+        assert resolved.source == ""
+        assert not resolved.enabled
+
+    def test_the_url_pin_holds_whether_or_not_the_fleet_named_a_source(self, monkeypatch):
+        """Both sides of the old boundary now answer the same way."""
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _ATTACKER_URL)
+        # Named a source -> the variable is ignored.
+        assert pd.resolve_distribution(_MANAGED_DECLARED).source == _MANAGED_DECLARED.source
+        # Named none -> the variable is STILL ignored; the central tier stays off.
+        assert pd.resolve_distribution(_MANAGED_DECLARED_NO_SOURCE).source == ""
+
+    def test_the_credential_channel_is_not_part_of_the_refusal(self, monkeypatch):
+        """``KIROCREW_POLICY_HEADERS`` is per-machine by design and stays readable.
+
+        It is not an addressing lever -- it cannot change WHICH document is fetched
+        -- and a managed host that could not present its own request credential
+        would simply be unable to reach the fleet source at all.
+        """
+        monkeypatch.setenv(pd.POLICY_HEADERS_ENV, json.dumps({"Authorization": "Bearer t"}))
+        assert pd.resolve_distribution(_MANAGED_DECLARED) == _MANAGED_DECLARED
+        assert pd.request_headers() == {"Authorization": "Bearer t"}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# The env document is in the declaration-peek chain
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class TestTheEnvDocumentIsInTheDeclarationPeekChain:
+    """The peek must follow the same order the tiers do: managed -> env -> bundled -> home.
+
+    The env document was missing from that chain, so an env-declared
+    ``distribution.source`` was silently ignored and the central tier never loaded
+    from it -- a fleet that bootstrapped through ``KIROCREW_SECURITY_POLICY`` got no
+    central ceiling at all, with nothing anywhere reporting why.
+
+    Only the MANAGED declaration is marked un-overridable. A lower tier naming a
+    source is the standalone operator choosing where their own ceiling comes from,
+    which is theirs to choose.
+    """
+
+    def _source(self, host: str) -> str:
+        """A URL on the fake scheme, distinct per *host* so the fetch can be named."""
+        return f"{_TEST_SCHEME}://{host}.example/security_policy.json"
+
+    def _fetcher(self, marker: str, seen: list):
+        return _static_fetcher(pd.FetchedPolicy(body=_body(marker)), seen)
+
+    def test_an_env_declared_source_drives_the_central_fetch(
+        self, monkeypatch, tmp_path, transport
+    ):
+        seen: list = []
+        transport(self._fetcher("central-push", seen))
+        source = self._source("env-declared")
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY",
+            str(_write_policy(tmp_path / "env.json", "bootstrap", distribution={"source": source})),
+        )
+        ceiling = governance.load_security_policy()
+        assert ceiling is not None
+        # Fetched from the address the env document named ...
+        assert [request.url for request in seen] == [source]
+        # ... and the fetched document is the authority, with the env tier beneath it.
+        assert ceiling.identity_issuer == "central-push"
+        assert ceiling.tier == governance.TIER_CENTRAL
+
+    def test_the_managed_declaration_still_outranks_the_env_one(
+        self, monkeypatch, tmp_path, transport
+    ):
+        """Two declarations, and the managed one names the address that is used.
+
+        Asserted on the URL that was FETCHED rather than on the composed identity,
+        because the managed tier outranks the central one either way -- so an
+        identity assertion alone would pass even if the env document had chosen the
+        source.
+        """
+        seen: list = []
+        transport(self._fetcher("central-push", seen))
+        managed_source = self._source("from-managed")
+        monkeypatch.setattr(
+            governance,
+            "_read_managed_policy",
+            lambda: _doc("mdm", distribution={"source": managed_source}),
+        )
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY",
+            str(
+                _write_policy(
+                    tmp_path / "env.json",
+                    "local-env",
+                    distribution={"source": self._source("from-env")},
+                )
+            ),
+        )
+        ceiling = governance.load_security_policy()
+        assert ceiling is not None
+        assert [request.url for request in seen] == [managed_source]
+        assert ceiling.tier == governance.TIER_MANAGED
+
+    def test_the_env_declaration_outranks_a_bundled_and_a_home_one(
+        self, monkeypatch, tmp_path, transport
+    ):
+        seen: list = []
+        transport(self._fetcher("central-push", seen))
+        env_source = self._source("from-env")
+        home = _write_policy(
+            tmp_path / "home.json", "home-decl", distribution={"source": self._source("from-home")}
+        )
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: home)
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY",
+            str(
+                _write_policy(
+                    tmp_path / "env.json", "env-decl", distribution={"source": env_source}
+                )
+            ),
+        )
+        ceiling = governance.load_security_policy(
+            bundled_loader=lambda: _doc(
+                "bundled-decl", distribution={"source": self._source("from-bundled")}
+            )
+        )
+        assert ceiling is not None
+        assert [request.url for request in seen] == [env_source]
+
+    def test_the_env_tier_itself_still_outranks_bundled_and_home(self, monkeypatch, tmp_path):
+        # Hoisting the read must not have changed WHERE the tier sits. No source is
+        # declared anywhere, so the central tier stays inert and the subordinate is
+        # decided by first-present-wins.
+        home = _write_policy(tmp_path / "home.json", "operator")
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: home)
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY", str(_write_policy(tmp_path / "env.json", "local-env"))
+        )
+        ceiling = governance.load_security_policy(bundled_loader=lambda: _doc("companion"))
+        assert ceiling is not None
+        assert ceiling.tier == governance.TIER_ENV
+        assert ceiling.identity_issuer == "local-env"
+
+    def test_the_env_document_is_read_exactly_once_per_load(self, monkeypatch, tmp_path):
+        """One read, so the peek and the tier cannot see different bytes.
+
+        Two reads is not merely wasteful: a document rewritten between them would let
+        the ``distribution`` block that chose the central source come from one version
+        while the ceiling installed as the env tier came from another. Counted at
+        ``_read_json_file`` rather than by patching a caller, so a future second read
+        added anywhere in the chain trips this.
+        """
+        env_path = _write_policy(tmp_path / "env.json", "local-env", distribution={"source": ""})
+        monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(env_path))
+        real_read = governance._read_json_file
+        reads: list = []
+
+        def counting(path):  # type: ignore[no-untyped-def]
+            reads.append(Path(path))
+            return real_read(path)
+
+        monkeypatch.setattr(governance, "_read_json_file", counting)
+        ceiling = governance.load_security_policy()
+        assert ceiling is not None
+        assert ceiling.tier == governance.TIER_ENV
+        assert [p for p in reads if p == env_path] == [env_path]
+
+    def test_subordinate_ceiling_with_its_original_four_arguments_still_reads_the_env_tier(
+        self, monkeypatch, tmp_path
+    ):
+        """``env_data``/``env_path`` are an optimisation, not an opt-in.
+
+        Every other caller passes the original four positional arguments, so the
+        function has to keep self-reading: had the parameters been made required in
+        spirit -- read only when handed over -- those callers would have silently lost
+        the env tier, which is a WIDENING (the tier that was governing disappears).
+        """
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY", str(_write_policy(tmp_path / "env.json", "local-env"))
+        )
+        ceiling = governance._subordinate_ceiling(None, None, None, tmp_path / "absent-home.json")
+        assert ceiling is not None
+        assert ceiling.tier == governance.TIER_ENV
+        assert ceiling.identity_issuer == "local-env"
+
+    def test_the_four_argument_form_still_prefers_the_env_document_over_bundled(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv(
+            "KIROCREW_SECURITY_POLICY", str(_write_policy(tmp_path / "env.json", "local-env"))
+        )
+        ceiling = governance._subordinate_ceiling(
+            _doc("companion"), None, None, tmp_path / "absent-home.json"
+        )
+        assert ceiling is not None
+        assert ceiling.identity_issuer == "local-env"
+
+    def test_an_unreadable_env_path_still_raises_naming_the_variable(self, monkeypatch, tmp_path):
+        """The read moved earlier; its disposition did not.
+
+        The env tier outranks bundled and home, so there is no lower tier whose own
+        failure could take precedence -- a fleet that pointed this variable at a file
+        it cannot read is misconfigured, and the message has to name the variable or
+        the operator has no way to find which of several governance files is meant.
+        """
+        broken = tmp_path / "env.json"
+        broken.write_text("{ not json", encoding="utf-8")
+        monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(broken))
+        with pytest.raises(PlatformCompositionError, match="from KIROCREW_SECURITY_POLICY"):
+            governance.load_security_policy()
+
+    def test_an_unreadable_env_path_raises_before_the_central_tier_answers(
+        self, monkeypatch, tmp_path, transport
+    ):
+        # Hoisting the read moved the refusal EARLIER than the central fetch, which is
+        # the one behavioural difference: a host misconfigured this way must not have
+        # its boot decided by whether a poll happened to succeed.
+        seen: list = []
+        transport(self._fetcher("central-push", seen))
+        home = _write_policy(
+            tmp_path / "home.json", "home-decl", distribution={"source": self._source("from-home")}
+        )
+        monkeypatch.setattr(governance, "_policy_home_path", lambda: home)
+        broken = tmp_path / "env.json"
+        broken.write_text("{ not json", encoding="utf-8")
+        monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(broken))
+        with pytest.raises(PlatformCompositionError, match="from KIROCREW_SECURITY_POLICY"):
+            governance.load_security_policy()
+        assert seen == []
+
+    def test_an_unreadable_env_path_still_raises_at_the_reader(self, monkeypatch, tmp_path):
+        broken = tmp_path / "env.json"
+        broken.write_text("{ not json", encoding="utf-8")
+        monkeypatch.setenv("KIROCREW_SECURITY_POLICY", str(broken))
+        with pytest.raises(PlatformCompositionError, match="from KIROCREW_SECURITY_POLICY"):
+            governance._read_env_policy()
+
+    def test_an_unset_variable_reads_as_no_env_document(self, monkeypatch):
+        monkeypatch.delenv("KIROCREW_SECURITY_POLICY", raising=False)
+        assert governance._read_env_policy() == (None, None)
+
+
+class TestCompositionPreservesTheFetchChannel:
+    """The distribution pins must survive EVERY path that rebuilds a ceiling.
+
+    They ride outside ``controls``, so the per-scope compose the fold uses does not
+    carry them and each rebuild has to do it explicitly.  One path did not: an
+    authority that declared no pins discarded the pins of the tier beneath it.  That
+    switches the central tier off, which drops every centrally supplied restriction -- the
+    looser-ceiling failure reached through the ladder that exists to prevent it.
+
+    Asserted on ``compose_tier_ladder`` directly because it is the single
+    implementation of precedence that both boot and a live refresh call.
+    """
+
+    _SOURCE = "https://fleet.example/policy.json"
+    _OTHER = "https://local.example/other.json"
+
+    @staticmethod
+    def _tier(tier: str, marker: str, **extra: object) -> object:
+        return governance.replace(governance.parse_policy(_doc(marker, **extra)), tier=tier)
+
+    @pytest.fixture(autouse=True)
+    def _working_sel(self, monkeypatch):
+        """A SEL that accepts every write, so a tier audit cannot refuse.
+
+        The critical audit on the override path is fail-closed by design; stubbing it
+        keeps these tests about the pins rather than about SEL availability.
+        """
+
+        class Stub:
+            def log_api_access(self, **kw):
+                return None
+
+        monkeypatch.setattr(governance, "sel", lambda: Stub())
+
+    def test_an_authority_with_no_pins_keeps_the_pins_beneath_it(self):
+        """A managed profile may govern controls and say nothing about distribution.
+
+        Keeping "the authority's" pins in that shape discarded the central tier's own
+        cadence rather than preserving a choice the fleet made, because there was no
+        choice to preserve.
+        """
+        authority = self._tier(governance.TIER_MANAGED, "authority")
+        central = self._tier(
+            governance.TIER_CENTRAL,
+            "central",
+            distribution={"source": self._SOURCE, "refresh_interval_secs": 3600},
+        )
+        assert not authority.distribution.declared
+
+        composed = governance.compose_tier_ladder(authority, central)
+
+        assert composed is not None
+        assert composed.tier == governance.TIER_MANAGED, "the authority still governs"
+        assert composed.distribution.source == self._SOURCE
+        assert composed.distribution.refresh_interval_secs == 3600
+
+    def test_a_lower_tier_cannot_redirect_a_source_its_authority_chose(self):
+        """The security property the pins exist for, unchanged by the fallback.
+
+        A tier may only supply pins when NOTHING above it declared any; it may never
+        replace pins that are already there.
+        """
+        authority = self._tier(
+            governance.TIER_MANAGED, "authority", distribution={"source": self._SOURCE}
+        )
+        lower = self._tier(governance.TIER_ENV, "lower", distribution={"source": self._OTHER})
+
+        composed = governance.compose_tier_ladder(authority, lower)
+
+        assert composed is not None
+        assert composed.distribution.source == self._SOURCE, "the authority's document wins"
+
+    def test_a_single_tier_composes_byte_identically(self):
+        """The re-apply must not perturb the one-document case."""
+        only = self._tier(governance.TIER_HOME, "only", distribution={"source": self._SOURCE})
+
+        composed = governance.compose_tier_ladder(only)
+
+        assert composed == only
+
+
+class TestTheDeclaredPredicate:
+    """``declared`` asks whether a tier expressed distribution AT ALL.
+
+    Separate from ``enabled``, which asks only whether a source is set: a managed
+    profile may publish the cadence and leave the address to whatever provisions the
+    host, and the ladder needs to tell "said nothing" from "said no source".
+    """
+
+    def test_a_default_value_declared_nothing(self):
+        assert governance.PolicyDistribution().declared is False
+
+    def test_a_source_alone_counts_as_declared(self):
+        dist = governance.PolicyDistribution(source="https://fleet.example/p.json")
+        assert dist.declared is True
+        assert dist.enabled is True
+
+    def test_a_cadence_without_a_source_still_counts_as_declared(self):
+        """The two-channel split: this is the case ``enabled`` cannot see."""
+        dist = governance.PolicyDistribution(refresh_interval_secs=900)
+        assert dist.declared is True
+        assert dist.enabled is False
+
+    def test_the_managed_marker_alone_counts_as_declared(self):
+        """An empty ``distribution: {}`` block in a managed profile is a declaration."""
+        assert governance.PolicyDistribution(managed=True).declared is True
+
+
+class TestAManagedSourceCannotBeRedirectedThroughAHeader:
+    """Pinning the URL is not enough while a header can pick the virtual host.
+
+    ``resolve_distribution`` refuses every environment override that could re-point a
+    managed distribution, and said so about the variables it pins -- but it deliberately
+    left ``KIROCREW_POLICY_HEADERS`` alone because headers carry credentials. ``Host`` is
+    not a credential: a shared reverse proxy in front of the fleet endpoint routes on it,
+    so a standard account could leave the pinned URL untouched and still be served an
+    attacker-controlled unsigned document. The pin was complete about addresses and blind
+    to the one header that is an address.
+    """
+
+    @staticmethod
+    def _dist(managed: bool):
+        return governance.PolicyDistribution(source=_TEST_SOURCE, managed=managed)
+
+    def test_the_host_header_is_dropped_for_a_managed_distribution(self, transport, monkeypatch):
+        seen: list = []
+
+        def fetcher(request):
+            seen.append(dict(request.headers))
+            return pd.FetchedPolicy(body=_body("central"))
+
+        transport(fetcher)
+        monkeypatch.setenv(
+            pd.POLICY_HEADERS_ENV,
+            '{"Host": "attacker-vhost", "X-Fleet-Key": "kept"}',
+        )
+        pd.fetch_once(self._dist(managed=True))
+        assert seen, "the transport was consulted"
+        assert "Host" not in seen[0], "the redirecting header is gone"
+        assert seen[0]["X-Fleet-Key"] == "kept", "credentials are untouched"
+
+    def test_any_spelling_of_host_is_dropped(self, transport, monkeypatch):
+        """HTTP header names are case-insensitive and urllib sends what it is given.
+
+        A check for ``Host`` alone is defeated by ``host``, so the match is folded.
+        """
+        seen: list = []
+
+        def fetcher(request):
+            seen.append(dict(request.headers))
+            return pd.FetchedPolicy(body=_body("central"))
+
+        transport(fetcher)
+        monkeypatch.setenv(pd.POLICY_HEADERS_ENV, '{"hOsT": "attacker-vhost"}')
+        pd.fetch_once(self._dist(managed=True))
+        assert not any(k.lower() == "host" for k in seen[0])
+
+    def test_an_unmanaged_distribution_keeps_its_host_header(self, transport, monkeypatch):
+        """The control: this pin belongs to the MANAGED tier only.
+
+        A standalone operator choosing their own endpoint may legitimately need a Host
+        header, and there is no redirection to refuse when no fleet pinned the address.
+        """
+        seen: list = []
+
+        def fetcher(request):
+            seen.append(dict(request.headers))
+            return pd.FetchedPolicy(body=_body("central"))
+
+        transport(fetcher)
+        monkeypatch.setenv(pd.POLICY_HEADERS_ENV, '{"Host": "my-vhost"}')
+        pd.fetch_once(self._dist(managed=False))
+        assert seen[0]["Host"] == "my-vhost"
+
+
+class TestAManagedDistributionKeyIsDecisiveOverLowerTiers:
+    """Declaring the channel is the fleet's claim, even with no address in it.
+
+    A managed ``distribution: {}`` says "the fleet owns where this ceiling comes from"
+    while naming no address -- the documented two-channel split, where whatever
+    provisions the host supplies the URL. ``_declared_distribution`` answers None for a
+    block with no source and no ``KIROCREW_POLICY_URL`` to pair with it, and the ``or``
+    chain then fell through to a LOWER tier's declaration. So a managed document that
+    pinned the channel got a locally chosen endpoint instead: the redirection the pin
+    exists to refuse, reached through the code meant to enforce it.
+    """
+
+    def test_a_lower_tier_cannot_supply_the_source_the_managed_block_omitted(
+        self, transport, install_ceiling, monkeypatch, tmp_path
+    ):
+        """Exercised through ``load_security_policy``, not through the peek helper.
+
+        The defect lives in the loader's ``or`` chain, so asserting on
+        ``_declared_distribution`` alone proves nothing -- an earlier version of this test
+        did exactly that and a mutation removing the fix sailed through it.
+        """
+        seen: list = []
+        source = transport(_static_fetcher(pd.FetchedPolicy(body=_body("pushed")), seen))
+        managed = _doc("mdm", distribution={})
+        monkeypatch.setattr(governance, "_read_managed_policy", lambda: managed)
+        monkeypatch.setattr(governance, "_assert_managed_file_trusted", lambda fd, p: None)
+        # A home document naming its OWN endpoint. Before the fix this address won.
+        monkeypatch.setattr(
+            governance,
+            "_policy_home_path",
+            lambda: _write_policy(tmp_path / "home.json", "home", distribution={"source": source}),
+        )
+
+        governance.load_security_policy()
+
+        assert seen == [], "the home-declared endpoint was never fetched"
+
+    def test_the_same_home_source_IS_used_when_managed_declares_no_channel(
+        self, transport, monkeypatch, tmp_path
+    ):
+        """The control: without a managed ``distribution`` key the home tier may declare.
+
+        A lower tier choosing where its own ceiling comes from is the standalone
+        operator's call, and the fix must not take that away -- only a managed document
+        that claimed the channel displaces it.
+        """
+        seen: list = []
+        source = transport(_static_fetcher(pd.FetchedPolicy(body=_body("pushed")), seen))
+        managed = _doc("mdm")  # no distribution key at all
+        monkeypatch.setattr(governance, "_read_managed_policy", lambda: managed)
+        monkeypatch.setattr(governance, "_assert_managed_file_trusted", lambda fd, p: None)
+        monkeypatch.setattr(
+            governance,
+            "_policy_home_path",
+            lambda: _write_policy(tmp_path / "home.json", "home", distribution={"source": source}),
+        )
+
+        governance.load_security_policy()
+
+        assert len(seen) == 1, "the home-declared endpoint was fetched"
+
+    def test_the_managed_block_still_pairs_with_the_url_channel(self, monkeypatch):
+        """The control: the two-channel split must keep working.
+
+        The fleet publishes the cadence and whatever provisions the host supplies the
+        address through ``KIROCREW_POLICY_URL``. Making the managed key decisive must not
+        break that -- it forbids a lower TIER from supplying the source, not the URL
+        channel ``resolve_distribution`` overlays.
+        """
+        managed = _doc("mdm", distribution={"refresh_interval_secs": 900})
+        monkeypatch.setenv(pd.POLICY_URL_ENV, _TEST_SOURCE)
+        declared = governance._declared_distribution(managed)
+        assert declared is not None, "the cadence survives to be overlaid"
+        assert declared.refresh_interval_secs == 900
+        assert not declared.source, "the fleet named a cadence, not an address"
