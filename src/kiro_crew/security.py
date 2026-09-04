@@ -205,6 +205,42 @@ _ENV_DUMP_GREP_AWS_PATTERN = (
 # (``printenv | grep ...``) is ``_ENV_DUMP_GREP_AWS_PATTERN``'s job.
 _PRINTENV_AWS_SECRET_PATTERN = r"(?<![\w-])printenv(?!\w).*AWS_" + _AWS_SECRET_VAR_NAMES
 
+# ``AWS_CONFIG_FILE`` / ``AWS_SHARED_CREDENTIALS_FILE`` hold a PATH, not a
+# secret, so neither is scrubbed from an agent child's environment -- the AWS CLI
+# and every SDK read them directly.
+#
+# Two rules here previously denied RETRIEVAL of those two names: a shell
+# dereference (``$NAME``, ``${NAME}``, ``%NAME%``, ``!NAME!``, ``$env:NAME``) and
+# an inline-interpreter environment lookup (``os.environ['NAME']``). Both are
+# REMOVED, deliberately, and the reasoning is worth keeping because it
+# generalizes to any future "deny the variable name" proposal.
+#
+# They existed because ``acp.client._apply_pod_home_remap`` used to EXPORT both
+# names into a pod child, pinned at the real home, so that a pod agent turn could
+# still reach the operator's AWS profiles after ``HOME`` moved. That export made
+# each name an alias for a path the sensitive-path keystone fences, and since the
+# matchers here work on command TEXT with no variable expansion, the alias was
+# reachable while the literal path was refused.
+#
+# Three review rounds each closed one spelling of that retrieval -- the shell
+# sigils, then the interpreter lookup, then ``cp "$(printenv NAME)" x`` -- which
+# is the shape of a losing race: command substitution, ``eval``, indirect
+# expansion (``v=NAME; cat "${!v}"``), and a two-line helper script are all still
+# available, and no text matcher can see through them. The alias was deleted at
+# its source instead: the remap no longer exports either name. With nothing
+# manufacturing the alias, these rules guarded only an operator who set the
+# variable in their own environment -- their own named file, not an alias this
+# codebase created -- at the cost of implying a completeness the pattern class
+# cannot deliver. Partial coverage of an unbounded bypass space is worse than
+# none, because it reads as a fence.
+#
+# The floor for a path named through a variable remains what it always was:
+# ``redact_credentials`` on the output, plus the sensitive-path fence on every
+# LITERAL spelling (which now includes ``KIROCREW_OS_HOME`` as an alternate home
+# root). ``_AWS_SECRET_VAR_NAMES`` above still denies retrieval of the variables
+# that hold a SECRET rather than a path; that set is closed and enumerable, which
+# is why a name-based rule is defensible there and was not here.
+
 
 BUILTIN_DENIED_RULES: list[DeniedCommandRule] = [
     DeniedCommandRule(
@@ -10055,11 +10091,52 @@ def _home_dir_targets_uncached(
     crew_home = resolved.crew_home
     kiro_home_override = resolved.kiro_home
     logical_home = resolved.logical_home
+    os_home = resolved.os_home
 
     def _anchor(root: str, d: str) -> str:
         return os.path.join(root, *d.split("/")).casefold()
 
+    def _anchor_both_separators(root: str, d: str) -> set[str]:
+        """*d* under *root*, spelled with BOTH separators.
+
+        ``_anchor`` joins with the RUNNING OS's separator, which is right for a
+        candidate that reached the matcher as a native path. It is not enough on the
+        bash surface: ``_shape_path_token`` normalises a token's ``\\`` to ``/``
+        before comparing, so on Windows the target was all-backslash while every
+        candidate form was all-forward-slash and the two never compared equal --
+        the gate silently stopped covering its own targets on that platform. The
+        same class was fixed once for the gateway home's regex legs (``win_gsep``);
+        this is the absolute-path half of it.
+
+        Emitting both spellings is strictly WIDENING -- no target is removed, and a
+        path is fenced under either spelling on either platform -- which is the
+        right direction for a gate whose documented stance is that a *maybe*
+        answers yes. Cheaper and more honest than teaching every candidate path to
+        re-derive the separator it should have used.
+        """
+        parts = d.split("/")
+        return {
+            os.path.join(root, *parts).casefold(),
+            "/".join([root.rstrip("/\\"), *parts]).casefold(),
+            "\\".join([root.rstrip("/\\"), *parts]).casefold(),
+        }
+
     sensitive_targets: set[str] = {_anchor(home, d) for d in home_dirs}
+    # ``KIROCREW_OS_HOME`` is an ALTERNATE ``$HOME`` (see _resolved_root_key):
+    # a pod-spawned kiro-cli child runs with it as its literal HOME, so its
+    # credential store and the seeded host SSO tokens live under this root. Every
+    # entry re-anchors here -- the variable relocates the whole home, not just
+    # ``.aws`` -- so a secret cannot be moved out from under its own gate.
+    if os_home:
+        for d in home_dirs:
+            sensitive_targets |= _anchor_both_separators(os_home, d)
+        try:
+            os_home_real = os.path.realpath(os_home)
+        except (OSError, ValueError):
+            os_home_real = os_home
+        if os_home_real.casefold() != os_home.casefold():
+            for d in home_dirs:
+                sensitive_targets |= _anchor_both_separators(os_home_real, d)
     home_real = os.path.realpath(home)
     if home_real.casefold() != home.casefold():
         sensitive_targets |= {_anchor(home_real, d) for d in home_dirs}
@@ -10208,6 +10285,19 @@ class _ResolvedRoots(NamedTuple):
     claude_config_dir: str | None
     claude_home: str | None
     logical_home: str
+    # ``KIROCREW_OS_HOME`` is an ALTERNATE WHOLE ``$HOME``, not one adapter's
+    # credential leaf: ``pod.runtime.build_pod_env`` sets it and
+    # ``acp.client._apply_pod_home_remap`` makes it the literal ``HOME`` of a
+    # pod-spawned kiro-cli child, so that child's whole credential store -- and
+    # the host SSO tokens ``pod.runtime._seed_pod_os_home`` copies into it --
+    # live under this root. It is therefore anchored by re-anchoring EVERY
+    # ``home_dirs`` entry in ``_home_dir_targets_uncached``, rather than through
+    # ``_OVERRIDE_ANCHORED_LEAVES``, which maps one leaf to the roots its parent
+    # can move to. Without it the relocated tree sits at a path no matcher
+    # covers, so an agent inside a pod could read the operator's identity token
+    # at the pod-path spelling while the identical bytes at ``~/.aws`` are
+    # refused.
+    os_home: str | None
 
 
 #: Sensitive leaf → the override roots its parent directory can be moved to.
@@ -10275,6 +10365,25 @@ def _resolved_root_key() -> _ResolvedRoots:
     spelling, which must still hit a target or the gate fails OPEN on exactly
     the hosts where ``$HOME`` is a link.  Keyed here so an env change that
     moves the logical spelling invalidates the cache like any other anchor.
+
+    ``os_home`` is the resolved ``KIROCREW_OS_HOME`` override, or ``None`` when
+    unset. It is an ALTERNATE ``$HOME``: ``pod.runtime.build_pod_env`` sets it
+    and ``acp.client._apply_pod_home_remap`` makes it the literal ``HOME`` of a
+    pod-spawned kiro-cli child, so kiro-cli's own ``$HOME``-derived credential
+    store — the runtime identity store ``pod.runtime._seed_pod_os_home`` mirrors
+    in, and the MCP OAuth grants that pod's own child MINTS under
+    ``.aws/sso/cache`` — lives under this root rather than under the real home.
+    No host SSO cache contents are copied in; that staging was removed. Anchoring
+    it here is what fences the relocated tree, and it is the ONLY layer that can:
+    the pod child's mount namespace must keep that tree readable AND writable
+    because kiro-cli writes its grants there and no env lever relocates them. So
+    the two audiences are split — the harness process reaches the tree, while an
+    agent TOOL call naming any path under it is refused in-band here. Every
+    ``home_dirs`` entry is re-anchored under it, not merely ``.aws``, because
+    the variable relocates the whole home: the crew-home leaves, ``.ssh`` and
+    every other fenced entry move with it. Same reasoning as the
+    ``KIROCREW_HOME`` expansion below — an override must not move a secret out
+    from under its own gate.
     """
     logical_home = str(Path.home())
     try:
@@ -10289,6 +10398,7 @@ def _resolved_root_key() -> _ResolvedRoots:
         claude_config_dir=_resolved_env_root("CLAUDE_CONFIG_DIR"),
         claude_home=_resolved_env_root("CLAUDE_HOME"),
         logical_home=logical_home,
+        os_home=_resolved_env_root("KIROCREW_OS_HOME"),
     )
 
 
@@ -14860,6 +14970,44 @@ def _find_anchor_relative_roots(roots: list[str], view: str) -> list[str]:
     return anchored
 
 
+def _windows_native_path_tokens(command: str) -> list[str]:
+    """Windows-native path tokens read WITHOUT shell backslash de-escaping.
+
+    ``_shell_tokens`` runs ``shlex.split(posix=True)``, which consumes ``\\`` as an
+    escape character. That is correct for a POSIX argv view and wrong for a
+    Windows-native literal: ``cat C:\\Users\\me\\.aws\\credentials`` tokenizes to
+    ``C:Usersme.awscredentials`` -- every separator eaten -- so the path matcher
+    receives a candidate that cannot match any target and the command is allowed.
+    ``is_sensitive_path`` on the same string succeeds, which is what made the gap
+    look like a target-building bug rather than a tokenization one.
+
+    This module already recorded the identical mangling once, for ``$HOME``
+    expansion: expanding before ``shlex`` inserted ``C:\\Users\\name`` into the
+    command and the backslashes were then reinterpreted, so expansion was moved
+    after tokenization (see :func:`normalize_shell_command`'s leading NOTE). A path
+    the operator typed LITERALLY reaches the same de-escaper from a different
+    direction, and moving expansion could not help it.
+
+    Fixed HERE rather than in ``_shell_tokens`` deliberately. That function is the
+    shared argv view for every deny tier and for ``_deny_segment_views``; teaching
+    it to keep backslashes would change program-name and flag parsing across the
+    whole gate. This is the path-candidate leg only, and it only ADDS readings --
+    monotone, exactly like the masked/raw pair it joins.
+
+    Whitespace splitting is enough: a Windows-native path is recognized by its own
+    anchor (drive letter or UNC prefix), and quotes are stripped from the ends so a
+    quoted spelling still yields the path. No expansion, no resolution.
+    """
+    tokens: list[str] = []
+    for raw in command.split():
+        token = raw.strip("\"'")
+        if not token:
+            continue
+        if _WIN_DRIVE_PATH_RE.match(token) or token.startswith("\\\\"):
+            tokens.append(token)
+    return tokens
+
+
 def _check_sensitive_via_normalizer(command: str) -> str | None:
     """Normalizer second-pass: tokenize command and route paths through is_sensitive_path.
 
@@ -14963,6 +15111,11 @@ def _check_sensitive_via_normalizer(command: str) -> str | None:
             full_tokens = normalize_shell_command(source)
         except Exception:
             continue
+        # Third reading, same monotone rationale as the masked/raw pair above: a
+        # Windows-native literal loses every separator to shlex's backslash
+        # de-escaping, so its un-de-escaped spelling is added rather than
+        # substituted. See :func:`_windows_native_path_tokens`.
+        full_tokens = [*full_tokens, *_windows_native_path_tokens(source)]
         for token in full_tokens:
             if not token or token in seen_tokens:
                 continue
@@ -20147,6 +20300,16 @@ def _win_anchor_roots() -> tuple[str, ...]:
     filesystem or network is touched deciding whether to recognize a token.
     """
     roots = [str(Path.home())]
+    # ``KIROCREW_OS_HOME`` for the same stated reason as ``KIROCREW_HOME``: this
+    # PR re-anchors every keystone leaf under it (see ``_home_dir_targets_uncached``),
+    # so it is a root whose drive must route a backslash token to
+    # ``is_sensitive_path()``. A pod home on the SAME drive as the user home was
+    # already recognized incidentally; one on another drive was not, which would
+    # have left the pod's own credential tree reachable through the shell gate on
+    # exactly the hosts the fence was extended for.
+    os_home_env = os.environ.get("KIROCREW_OS_HOME")
+    if os_home_env:
+        roots.append(os.path.expanduser(os_home_env))
     crew_env = os.environ.get("KIROCREW_HOME")
     if crew_env:
         roots.append(os.path.expanduser(crew_env))
