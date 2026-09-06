@@ -103,7 +103,6 @@ def test_every_gate_fails_closed_on_a_stall(monkeypatch) -> None:
         assert security.is_sensitive_write_path(token)
         assert security.path_contains_sensitive("/home/someone/ws")
         assert security._is_keystone_publish_artifact("/home/someone/ws/x.tmp")
-        assert security._dir_holds_sensitive_leaf("/home/someone/ws")
     finally:
         stalled.release.set()
 

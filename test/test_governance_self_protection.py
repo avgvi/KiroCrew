@@ -198,22 +198,49 @@ def test_benign_key_value_and_dot_segment_commands_not_overblocked():
         assert security.is_sensitive_bash_command(cmd) is None, cmd
 
 
-def test_attached_redirections_blocked():
-    """Redirections without a space (>~/path, >>~/path, 2>~/path, <~/path)
-    must not bypass the normalizer -- shlex keeps them as one token, so the
-    operator prefix must be stripped before path checking."""
-    for cmd in (
-        "printf x >~/.kiro/crew/./live_target.json",
-        "echo x >>~/.kiro/crew/./live_target.json",
-        "echo x 2>~/.kiro/crew/./live_target.json",
-        "echo x 2>>~/.kiro/crew/./security_policy.json",
-        "printf x >~/.kiro/crew/./sel_hmac.key",
-        # Input redirections
-        "cat <~/.kiro/crew/./.env",
-        "wc <~/.kiro/crew/./sel_hmac.key",
-        "sort <~/.kiro/crew/./security_policy.json",
-    ):
-        assert security.is_sensitive_bash_command(cmd) is not None, cmd
+def test_the_named_ceiling_and_secret_leaves_are_fenced_at_the_OS_LAYER():
+    """The leaves this file names are fenced where a SUBPROCESS is actually bound.
+
+    This assertion used to run ``is_sensitive_bash_command`` over eight attached-redirect
+    spellings (``>~/.kiro/crew/./<leaf>`` and the ``<`` input forms). It was testing the
+    wrong layer, and the layer it tested could not hold: a spawned shell reaches a file
+    through an ``open()`` that never routes through the tool gate, so a path fenced only
+    there is readable in any sandbox mode whatever the text matcher recognises. Matching
+    one more spelling never converged -- six review rounds produced a new one each time
+    (``/./``, a glued redirect, ``pushd``, an assignment, a conditional assignment).
+
+    What binds a subprocess is the OS layer in :mod:`kiro_crew.sandbox`, so that is what
+    is pinned: every leaf named here carries a HIDDEN (bind-masked in every mode) or
+    READONLY (readable in-sandbox, never writable) disposition.
+
+    Two residuals are stated rather than asserted away, because the OS layer does not
+    close either and no text matcher can:
+
+    * READONLY permits the READ, so an in-sandbox reader can still open
+      ``security_policy.json``. Only its WRITE is refused, in every mode.
+    * ``sel_hmac.key`` is VISIBLE, not fenced at all: in-sandbox code needs read AND
+      write, so by the sandbox's own design it "stays on the tool gate alone". The
+      surviving sensitive-path fence still refuses the direct spelling; what the
+      deletion gives up is the OBFUSCATED bash spellings of it. Closing that properly
+      means moving its in-sandbox reader behind the gateway so the leaf can become
+      HIDDEN -- a sandbox change, not another regex.
+
+    ``test_sandbox_governance_mask.py`` pins the dispositions themselves.
+    """
+    from kiro_crew import sandbox
+
+    fenced = sandbox._CREW_HIDDEN_LEAVES + sandbox._CREW_READONLY_LEAVES
+
+    def _carries(leaf: str, entries: "tuple[str, ...]") -> bool:
+        return any(entry == leaf or entry.endswith("/" + leaf) for entry in entries)
+
+    for leaf in ("live_target.json", "security_policy.json", ".env"):
+        assert _carries(leaf, fenced), leaf
+
+    # Pinned as VISIBLE on purpose: if it ever becomes maskable this assertion fails and
+    # the residual above is what should be revisited.
+    assert _carries("sel_hmac.key", sandbox._CREW_SANDBOX_VISIBLE_LEAVES)
+    assert not _carries("sel_hmac.key", fenced)
 
 
 def test_attached_redirections_benign_not_overblocked():

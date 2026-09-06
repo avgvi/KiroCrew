@@ -81,9 +81,26 @@ Detail and rationale: [security](docs/system-specs/modules/security.md),
 [computer-use](docs/system-specs/modules/computer-use.md).
 
 - **Keystone.** `security_policy.json`, `profiles/`, `admission_policy.json` and
-  `computer_use.json` under the data home stay in `security._SENSITIVE_HOME_DIRS`,
-  covering read AND write AND extract verbs. This single mechanism is what makes
-  the ceiling un-disableable, and a matcher weakened by accident is invisible.
+  `computer_use.json` under the data home are the ceiling the agent is governed by.
+  **The enforcement point is the OS layer in `sandbox.py`, not a text matcher.** Every
+  crew-home leaf carries one of three dispositions, and which one it has IS the
+  statement of what is guaranteed: `HIDDEN` (bind-masked in every mode — the credential
+  homes, `.env`, `live_target.json`), `READONLY` (in-sandbox code reads it and a write
+  would let the agent choose its own ceiling — the four leaves above), or `VISIBLE`
+  (in-sandbox code needs read *and* write, so no OS rule applies and it rests on the
+  tool gate alone). Precisely, then: the agent **cannot write** its own ceiling in any
+  sandbox mode, and it **can read** it, deliberately — masking a policy file makes it
+  resolve to the permissive standalone default, so hiding a ceiling REMOVES it instead
+  of protecting it. Do not restore a read block by pattern-matching command text: a
+  spawned shell reaches a file through an `open()` that never routes through the tool
+  gate, so a path fenced only there is readable in any sandbox mode whatever the matcher
+  recognises, and each spelling closed (`/./`, a glued redirect, a variable, `cd`,
+  `pushd`) narrows an unbounded set by exactly one. `test_sandbox_governance_mask.py`
+  pins the union of the three dispositions equal to the crew-home half of
+  `security.sensitive_home_dirs()`, so a new leaf cannot land in none of them — that
+  pin, not a regex, is what keeps the ceiling un-disableable. One residual worth
+  carrying: `sel_hmac.key` is `VISIBLE`, so the SEL audit key has no OS fence; closing
+  that means moving its in-sandbox reader behind the gateway, never another matcher.
 - **Governance is `POLICY ∩ PROFILE`, tightest-wins**, enforced at Kiro Crew's OWN
   PreToolUse gate even when the kiro agent config granted the call. The evaluator
   is scope-name-agnostic, so adding a scope is a `SCOPE_CATALOG` data change, never
