@@ -33,6 +33,7 @@ from kiro_crew.acp._dispatch import (
     classify_notification,
     parse_metadata,
     parse_prompt_token_usage,
+    parse_refusal,
     parse_session_update,
     parse_text_chunk,
     parse_usage_cost,
@@ -2467,10 +2468,12 @@ class AcpSessionHandle:
                                     yield AcpEvent(
                                         kind=EVENT_AGENT_SWITCHED, text=name
                                     )
+                    reason, _refusal = self.last_prompt_stats.terminal_refusal(reason)
                     self._last_stop_reason = reason
                     self._tool_dispatched = False
                     self._turn_done.set()
                     yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason,
+                                   refusal=_refusal,
                                    usage=self.last_prompt_stats.to_turn_usage())
                     return
                 if msg.method is None and msg.id is not None:
@@ -2973,6 +2976,14 @@ class AcpSessionHandle:
             self.last_prompt_stats.note_pct_reported()
             self._backfill_context_window(pct_f)
         self.last_prompt_stats.credits += credits
+        # Every handle on the shared runtime is kiro-cli or KAS -- both members
+        # of ACP_BACKENDS_STRUCTURED_REFUSAL (ACP_BACKENDS_ACP_RUNTIME is a
+        # subset of it, pinned by test_harness_parity) -- so the refusal
+        # envelope is read unconditionally here. Folded onto the terminal by
+        # ``terminal_refusal``; a frame without the envelope leaves it alone.
+        _refusal = parse_refusal(params)
+        if _refusal is not None:
+            self.last_prompt_stats.refusal = _refusal
 
     def _backfill_context_window(self, pct: float) -> None:
         """Derive window/used tokens from a percentage-only reading.

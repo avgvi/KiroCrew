@@ -60,6 +60,7 @@ from kiro_crew.acp._dispatch import (
     make_unified_diff,
     parse_claude_compaction_notice,
     parse_prompt_token_usage,
+    parse_refusal,
     parse_session_modes,
     parse_usage_cost,
     parse_usage_update,
@@ -87,6 +88,7 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_SEED_LOCAL_SETTINGS,
     ACP_BACKENDS_SESSION_MCP_ARRAY,
     ACP_BACKENDS_STEER,
+    ACP_BACKENDS_STRUCTURED_REFUSAL,
     ACP_CLIENT_CAPABILITIES,
     EVENT_AGENT_SWITCHED,
     EVENT_CLEAR_STATUS,
@@ -6634,6 +6636,7 @@ class AcpClient:
                 _compaction_settle = self._settle_claude_compaction(reason)
                 if _compaction_settle is not None:
                     yield _compaction_settle
+                reason, _refusal = self.last_prompt_stats.terminal_refusal(reason)
                 # Turn is over — disarm the stall watchdog.
                 self._tool_dispatched = False
                 self._last_stop_reason = reason
@@ -6641,6 +6644,7 @@ class AcpClient:
                 yield AcpEvent(
                     kind=EVENT_COMPLETE,
                     stop_reason=reason,
+                    refusal=_refusal,
                     usage=self.last_prompt_stats.to_turn_usage(),
                 )
                 return
@@ -8140,6 +8144,13 @@ class AcpClient:
 
     def _track_metadata(self, msg: JsonRpcMessage) -> None:
         params = msg.params or {}
+        # Content-filter refusal envelope. Opt-in by membership (H6): a harness
+        # that has not demonstrated the payload does not have its metadata
+        # frames guessed at. Folded onto the terminal by ``terminal_refusal``.
+        if self.backend in ACP_BACKENDS_STRUCTURED_REFUSAL:
+            _refusal = parse_refusal(params)
+            if _refusal is not None:
+                self.last_prompt_stats.refusal = _refusal
         # A real usage_update is authoritative for both the token counts AND the
         # pct derived from them. kiro's metadata percentage can measure a
         # different window, so applying it here would desync the headline % from
