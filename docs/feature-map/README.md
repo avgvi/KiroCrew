@@ -218,6 +218,7 @@ is `/settings/<key>`. Panels live in `pages/settings/`.
 | `developer` | Developer Mode gate, Feature Previews opt-ins (client flags), local-gateway switch | `DeveloperPanel.tsx`, `FeaturePreviewsSection.tsx` | — | — |
 | `releases` | Release channel, update check, changelog | `ReleasesPanel.tsx` | `handlers/updates.py` | `GET /api/update/check`, `POST /api/update`, `GET /api/changelog`, `GET /api/releases` |
 | `about` | Version, build, diagnostics bundle | `AboutPanel.tsx`, `ReportProblemCard.tsx` | `handlers/diagnostics.py`, `handlers/feedback.py` | `POST /api/diagnostics/collect`, `GET /api/diagnostics/download/{filename}` |
+| — (cross-cutting) | Host-side backup of the browser-held settings the tabs above write, so they survive a moved dashboard port or a relocated Electron `userData`. Restores on a profile that has never reached the host; allowlist-scoped (`DURABLE_PREF_KEYS`), not every browser key | — (no panel; `lib/uiPrefs.ts` is the client) | `handlers/ui_prefs.py` | `GET,PUT /api/ui-prefs` |
 
 Flagged-file delivery consent (`GET,POST,DELETE /api/file-delivery/consent`,
 owner-gated) is listed on the `security` row because that is the tab it belongs
@@ -230,6 +231,14 @@ the record sits on the sandbox-sealed keystone floor.
 Instances is deliberately not a rail row: it is set up here once and switched
 from the header tab strip. Webhooks carries both a preview flag and
 `hiddenFromNav`, so it surfaces as this Settings tab rather than a rail row.
+
+The UI-preference backup row carries no tab because it has no panel and nothing
+for a user to reach: it is the mechanism behind the tabs above, listed so its
+handler has an owner in this map. Its allowlist is explicit, so a preference
+absent from `DURABLE_PREF_KEYS` is still lost on an origin change, and a value
+that gates a safety confirmation (`mc-yolo-ack`) is deliberately excluded. The
+contract is in
+[../system-specs/modules/config.md](../system-specs/modules/config.md).
 
 ## Developer
 

@@ -12,6 +12,7 @@ dashboard URL via the config file. (The dashboard *port* is set with the
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import math  # noqa: F401 - historical loader namespace compatibility
@@ -28,6 +29,10 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit as _urlsplit  # noqa: F401 - compatibility facade
 
+# Module alias for post-split helpers. The `from ... import` list below is a
+# FROZEN pre-split alias snapshot (test_loader_reexports_historical_snapshot_by_identity),
+# so new resolution helpers are reached through the module, not re-exported.
+import kiro_crew.config.resolution as _resolution
 from kiro_crew import __version__, model_registry, platform_compat, windows_acl
 from kiro_crew.acp_backends import ACP_BACKEND_CLAUDE
 
@@ -1925,9 +1930,39 @@ def _cached_validated_data(fp: tuple | None = None) -> dict | None:
     return _CONFIG_CACHE.get(fp if fp is not None else _config_fingerprint())
 
 
-def _store_validated_data(data: dict, fp: tuple) -> None:
-    """Cache a deep copy of *data* under fingerprint *fp* (see ConfigCache.store)."""
-    _CONFIG_CACHE.store(data, fp)
+def _store_validated_data(data: dict, fp: tuple, sidecar: dict | None = None) -> None:
+    """Cache a deep copy of *data* (+ *sidecar*) under *fp* (see ConfigCache.store)."""
+    _CONFIG_CACHE.store(data, fp, sidecar)
+
+
+#: Sidecar key under which the loader caches the pre-overlay base values of the
+#: top-level sections config.local.json touches. See ``_shadowed_base_sections``.
+_SIDECAR_BASE_SHADOW = "base_shadow"
+
+
+def _shadowed_base_sections(base: dict, overlay: dict) -> dict:
+    """The base document's copy of every top-level section the overlay touches.
+
+    ``_deep_merge`` lets an overlay leaf replace a base leaf, and after the merge
+    nothing remembers what the base held. That is fine for modelled keys — they
+    are parsed into fields and ``save()`` re-emits the field, while
+    ``_subtract_overlay`` keeps the overlay's value out of the base file. It is
+    NOT fine for the unknown keys ``_extra_sections`` / ``_extra_keys`` round-trip
+    verbatim: captured from the MERGED document they hold the overlay's value, so
+    ``save()`` emits it, the subtraction removes it (it equals the raw overlay
+    value), and the base file loses a key it had. Removing the overlay later then
+    reveals nothing — the base value is gone for good.
+
+    Capturing from the base instead makes the round-trip honest: ``save()`` emits
+    the base value, it differs from the overlay leaf so subtraction leaves it, and
+    the overlay still wins on the next load exactly as before.
+
+    Only sections the overlay names are kept (an overlay normally touches a few),
+    and only their base copy — the loader already has the merged copy. This rides
+    in the cache sidecar so a cache hit, where the overlay is no longer in scope,
+    can still capture correctly.
+    """
+    return {k: copy.deepcopy(base[k]) for k in overlay if k in base}
 
 
 def _invalidate_config_cache() -> None:
@@ -2245,6 +2280,16 @@ class KiroCrewConfig:
     # ConfigSchemaContributor seam — a companion writes its section, the core
     # round-trips it untouched.
     _extra_sections: dict = field(default_factory=dict)
+    # Unknown keys found INSIDE a modelled section, captured at load() and
+    # re-emitted by to_dict() for the same reason as _extra_sections one level
+    # up: a build that stops modelling ``<section>.<key>`` (a rename, a removal,
+    # an older config written by a newer edition) would otherwise erase the
+    # operator's value on the next save() of any kind, with no backup on that
+    # path. Shape: {section: {key: value}}. Populated only from disk, and only
+    # ever used to fill a key the emitted section LACKS, so it cannot clobber a
+    # live value. See resolution.capture_extra_section_keys for what counts as
+    # unknown (a schema-modelled key that validation rejected stays dropped).
+    _extra_keys: dict = field(default_factory=dict)
 
     def channel_config(self, channel_id: str) -> ChannelConfig:
         """Return the config for *channel_id*, falling back to defaults.
@@ -2361,9 +2406,18 @@ class KiroCrewConfig:
         # second pass would be filesystem I/O there for information already in
         # hand.
         fp = _config_fingerprint()
-        cached_data = _cached_validated_data(fp)
-        if cached_data is not None:
-            data = cached_data
+        # Data and sidecar come from ONE lock hold: fetched separately, a save()
+        # on another thread could clear the cache between the two and hand this
+        # load a merged document with an EMPTY base shadow — which would then be
+        # captured from as if no overlay existed (see _shadowed_base_sections).
+        cached = _CONFIG_CACHE.get_with_sidecar(fp)
+        # Pre-overlay base copy of the sections the overlay touched. Filled on the
+        # disk path below; read from the sidecar on a cache hit. Empty when there
+        # is no overlay, in which case the merged document IS the base.
+        base_shadow: dict = {}
+        if cached is not None:
+            data, sidecar = cached
+            base_shadow = sidecar.get(_SIDECAR_BASE_SHADOW, {})
         else:
             # fp was captured BEFORE reading, so a write landing during the read
             # is detected: we cache under it, it won't match the post-write
@@ -2425,6 +2479,9 @@ class KiroCrewConfig:
                     _mark_file_degraded(local_path)
 
             if local_data:
+                # Remember the base copy of what the overlay is about to shadow —
+                # the last moment both documents exist. See _shadowed_base_sections.
+                base_shadow = _shadowed_base_sections(data, local_data)
                 data = _deep_merge(data, local_data)
 
             # A present source that cannot be read or parsed may contain the
@@ -2486,8 +2543,10 @@ class KiroCrewConfig:
             # on the disk-read path; cache hits below already serve clamped values.
             _clamp_security_bounds(data)
             # Cache the validated, merged dict under the PRE-read fingerprint so
-            # a mid-read write self-heals (next load misses and re-reads).
-            _store_validated_data(data, pre_read_fp)
+            # a mid-read write self-heals (next load misses and re-reads). The
+            # base shadow rides along so a hit can capture unknown keys from the
+            # base document exactly as this disk read did.
+            _store_validated_data(data, pre_read_fp, {_SIDECAR_BASE_SHADOW: base_shadow})
 
         # Collected during the parse that discards them — the only moment the
         # evidence exists, since the migration below rewrites config.json in
@@ -2659,9 +2718,17 @@ class KiroCrewConfig:
         # survives the load()->to_dict()->save() round-trip instead of being
         # silently dropped. ``meta`` is stamped by save() itself, so it is never
         # treated as an unknown section to preserve.
+        #
+        # Captured from the BASE view, not the merged one: for any section the
+        # overlay touched, ``base_shadow`` holds what config.json itself said.
+        # Capturing the merged value would make save() emit the overlay's leaf,
+        # which _subtract_overlay then removes — deleting the base file's own
+        # value. See _shadowed_base_sections. Sections the overlay did not touch
+        # are identical in both views.
+        capture_view = {**data, **base_shadow}
         extra_sections = {
             k: v
-            for k, v in data.items()
+            for k, v in capture_view.items()
             if k not in _KNOWN_CONFIG_SECTIONS and k not in CONFIG_RESERVED_TOP_KEYS
         }
 
@@ -3697,6 +3764,13 @@ class KiroCrewConfig:
             _extra_sections=extra_sections,
         )
 
+        # Unknown keys nested inside a modelled section. Captured AFTER
+        # construction because deciding what is unknown needs the built
+        # dataclasses' own field sets, not a second hand-maintained list that
+        # could drift from them. Same base-not-merged view as _extra_sections
+        # above, for the same reason.
+        cfg._extra_keys = _resolution.capture_extra_section_keys(capture_view, cfg)
+
         # Write-back migration: if the on-disk config has legacy format
         # (flat workspace strings, missing sections), back up the original
         # and save the migrated version.  One-shot — subsequent loads see
@@ -3854,6 +3928,13 @@ class KiroCrewConfig:
         else:
             slack_section.pop("trusted_bot_ids", None)
         slack_section["observe_ttl_hours"] = self.observe_ttl_hours
+        # Restore unknown keys captured INSIDE a modelled section (and inside the
+        # named records of agents/workspaces/memory_stores). Last in the method
+        # on purpose: every conditional and derived emission above has already
+        # run, so the fill-only rule reads the final truth and a captured copy
+        # can only ever FILL a gap, never overwrite a live value or undo a
+        # deliberate deletion.
+        _resolution.restore_extra_section_keys(d, self._extra_keys)
         return d
 
     def save(self) -> None:

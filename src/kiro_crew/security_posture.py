@@ -1222,6 +1222,19 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "peer's bytes become this dashboard's transcript re-applies the "
         "credential + exfiltration-URL chain itself, before any broadcast.",
     ),
+    (
+        "Host-side UI preference backup",
+        "ui_prefs.py",
+        "Every value read back from `~/.kiro/crew/ui-prefs.json` before it is "
+        "served by `GET /api/ui-prefs` and written into the renderer's "
+        "localStorage. The values are opaque strings the server never parses, "
+        "and the file sits in the agent-writable data home, so a credential or "
+        "exfiltration URL smuggled inside an innocent key would otherwise reach "
+        "the dashboard verbatim. A value the credential + exfiltration-URL chain "
+        "would alter is DROPPED rather than served redacted: a redacted "
+        "preference is not one the client can use, and the sync loop would "
+        "write the sentinel back over the file.",
+    ),
 )
 
 # Modules that call a redactor but are NOT an output egress boundary, so they do

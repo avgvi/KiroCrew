@@ -21,6 +21,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import kiro_crew
+import kiro_crew.config.resolution as _resolution
 from kiro_crew import beacon, platform_compat, stt
 from kiro_crew.acp_backends import selectable_backend_values
 from kiro_crew.computer_use.types import MAX_SCREENSHOT_MAX_PX as _CU_MAX_SCREENSHOT_MAX_PX
@@ -225,6 +226,15 @@ def _masked_config_dict(cfg: KiroCrewConfig) -> dict:
     # so through its own masked route, not this core endpoint.)
     for _extra_key in getattr(cfg, "_extra_sections", {}):
         masked.pop(_extra_key, None)
+
+    # Same reasoning one level down (KiroCrewConfig._extra_keys): an unknown key
+    # captured INSIDE a modelled section — or inside a named agents/workspaces/
+    # memory_stores record — is absent from the schema too, so the sensitivity
+    # walk below cannot recognize it either; a credential a previous build stored
+    # under a since-renamed key (`slack.legacy_bot_token`) would ship verbatim.
+    # Preserving it for save() is the point of the capture; showing it to the
+    # browser is not.
+    _resolution.drop_extra_section_keys(masked, getattr(cfg, "_extra_keys", {}))
 
     def _walk(node: object, prefix: str) -> None:
         if isinstance(node, dict):

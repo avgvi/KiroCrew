@@ -483,6 +483,11 @@ from kiro_crew.dashboard.handlers.themes import (  # noqa: E402, F401
     api_themes_install,
 )
 
+# ── Browser UI preference backup (extracted to handlers/ui_prefs.py) ──
+from kiro_crew.dashboard.handlers.ui_prefs import (  # noqa: E402, F401
+    api_ui_prefs,
+)
+
 # ── Updates & Logs (extracted to handlers/updates.py) ──
 # NOTE: api_stream passes update_available= to status_snapshot (see updates.py)
 from kiro_crew.dashboard.handlers.updates import (  # noqa: E402, F401

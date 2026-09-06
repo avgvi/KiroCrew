@@ -381,6 +381,149 @@ Returns `~/.kiro/crew/config.local.json` (or `$KIROCREW_HOME/config.local.json`)
 Recursively merges overlay into base. Dict values merge recursively; all other
 types in overlay replace base values.
 
+## Browser UI preferences (ui-prefs.json)
+
+`~/.kiro/crew/ui-prefs.json` is a backup of the dashboard settings that live in
+the renderer's `localStorage`, not in `config.json`. It exists because
+`localStorage` is keyed by ORIGIN and, in the desktop app, stored inside
+Electron's `userData` directory, so a moved dashboard port, a relocated
+`userData` directory, a switch between the stable and nightly builds, or a
+browser storage eviction wipes every setting the user chose — and reads to the
+user as "the upgrade lost my settings".
+
+Owned by `kiro_crew/ui_prefs.py`, served by `GET`/`PUT /api/ui-prefs`, and
+consumed by `website/src/lib/uiPrefs.ts`. Deliberately NOT a section of
+`config.json`:
+
+- `KiroCrewConfig.save()` re-emits the whole dataclass, so a key the running
+  build does not model is dropped on the next save. A bag of client-owned UI
+  keys is exactly the shape that loses that fight.
+- `config.json` is operator-facing; renderer layout keys do not belong in it.
+
+Contract:
+
+- Values are opaque UTF-8 strings (what `localStorage` holds). The server never
+  parses them. The file is `{"prefs": {...}}` and nothing else: an earlier
+  revision carried a `version` and an `updated_at` that no code read, and the
+  loader is tolerant of any shape it does not recognize, so a future reshape
+  needs no version field to be safe.
+- `PUT` is a merge patch; a `null` value deletes its key. BOTH methods are
+  owner-gated: the write so a viewer cannot overwrite the owner's settings, and
+  the read because some values name real paths on the host (the file explorer's
+  saved state, the cloud launch defaults). Gating the read costs nothing, since a
+  non-owner can never have written a backup.
+- Keys whose name looks like a credential (`token`, `secret`, `password`,
+  `credential`, `api_key`) are refused on write and filtered on read, so the
+  dashboard bearer token can never land here.
+- Bounds: 200 keys, 128-char keys, 64 KiB per value, 512 KiB total. A patch that
+  would breach them is rejected WHOLE; nothing partial is written. The client
+  answers a rejection by retrying the patch one key at a time, so one unstorable
+  value cannot discard the valid changes bundled with it.
+- An unreadable or malformed file means "no backup", never an error: the client
+  falls back to whatever `localStorage` holds.
+- The client reads the backup when this profile has never successfully reached
+  the host (`mc-ui-prefs-synced` absent) and only fills keys that are absent, so
+  it can never clobber a value the running profile already has. Keyed on
+  never-synced rather than no-settings-present so a boot whose fetch failed
+  retries on the next one instead of forfeiting the restore. Otherwise the client
+  is write-only: the backup is a backup, not a live cross-tab sync channel.
+- When the restore actually wrote something the page RELOADS instead of
+  rendering. Restoring before the first render is not sufficient on its own:
+  static imports are evaluated before the entry module's first statement, so a
+  store that reads its key at module scope (`hooks/useBottomTerminal.ts`) has
+  already captured the pre-restore value and its first write would persist that
+  stale copy back over the restored one. The reload is correct for every
+  module-scope reader without a per-store re-init hook, costs one extra load on a
+  fresh profile, and cannot loop because the synced marker is written first.
+- Every key the host holds is baselined with whatever is in `localStorage` for it
+  after the restore — including a local value that DIFFERS from the host's and
+  was kept. The hydrating origin is by definition the one that has not been
+  syncing, so uploading its value on first flush would overwrite the newer backup
+  with a possibly months-stale one; baselined, it stays in use locally and is
+  uploaded the moment the user changes it. A value the quota-safe writer had to
+  drop is NOT baselined, or the first flush would read it as a deletion and null
+  out a good host backup.
+- A FAILED first restore writes `mc-ui-prefs-hydrate-pending` holding the list of
+  durable keys the profile held AT THAT MOMENT. On the next successful restore a
+  key in that list — and any change the user made to it since — is the user's,
+  so local wins as usual; a key NOT in the list was written after the failure by
+  a page that rendered without its settings (a login screen counts; mount-time
+  hooks persist defaults), so for it the HOST wins — treating those defaults as
+  the user's choice would upload them over the real backup. A repeat failure
+  never widens the list. A never-failed first restore keeps the normal rule.
+  Letting the host win for every key instead had the mirror-image defect: a
+  returning user whose GET failed once and then changed a preference saw the
+  stale host value overwrite the change. The marker is cleared only after the
+  synced marker is written, so a crash between the two leaves the profile
+  pending rather than synced-with-untrusted-locals.
+- `mc-ui-prefs-synced` also holds the NAMES this profile last synced, which is
+  how a deletion made before a reload is still reported as a `null` while a key
+  this profile never synced is never nulled — that is what stops a second browser
+  from deleting the first one's settings.
+- Which keys are durable is the client's decision (`DURABLE_PREF_KEYS`).
+  Session-scoped and derived state (height caches, panel tabs, drafts, touched
+  files) is excluded, as are the settings `config.json` already owns (theme
+  mode/colour, language, onboarding flags) and keys a migration deliberately
+  deletes (`mc-zoom`, `mc-font-scale`), so no setting has two homes and nothing
+  resurrects a key a migration removed.
+- Also excluded: any value that GATES A SAFETY CONFIRMATION. `mc-yolo-ack` is the
+  instance — its presence makes the approval-mode picker skip the confirmation
+  and enable full auto-approval — and the reason is that this file sits in the
+  agent-writable data home, so a restorable ack is an ack an agent can forge for
+  the user's next fresh origin. Convenience does not outrank a human gate.
+
+## Unknown keys are preserved on round-trip
+
+`save()` re-emits the whole dataclass, so anything the running build does not
+model is absent from what it writes. Two capture fields stop that from erasing
+the operator's settings on an upgrade:
+
+- `_extra_sections` holds unknown TOP-LEVEL sections (an edition-contributed
+  section written by a companion), classified against `_KNOWN_CONFIG_SECTIONS`.
+- `_extra_keys` holds unknown keys INSIDE a modelled section, `{section: {key:
+  value}}`, captured by `resolution.capture_extra_section_keys`. Without it, a
+  build that renamed or removed `<section>.<key>` erased the value on the next
+  `save()` of any kind (a log-level change, adding a workspace, editing an
+  agent), with no backup on that path.
+
+Both restore a key only when the emitted document LACKS it, so a captured copy
+can never overwrite a live value or undo a deliberate deletion. `_extra_keys`
+has two shapes: `{key: value}` for a dataclass-backed section, and
+`{record_name: {key: value}}` for the maps of named records (`agents`,
+`workspaces`, `memory_stores`), whose records are parsed field-by-field and
+re-emitted with `asdict` and so lose unmodelled keys the same way a section
+does. `hooks` needs neither: it is emitted raw and round-trips whole. A record
+deleted in memory stays deleted — restore fills into existing records only.
+
+Both capture from the BASE view of the document, not the merged one. When
+`config.local.json` shadows an unknown key that `config.json` also holds, a
+capture of the merged value made `save()` emit the overlay's leaf, which the
+overlay subtraction then removed — permanently deleting the base file's own value,
+so removing the overlay later revealed nothing. The loader therefore records the
+base copy of every top-level section the overlay touches (`_shadowed_base_sections`)
+at the last moment both documents exist, and captures against that. `save()`
+then emits the base value, the subtraction leaves it (it differs from the overlay
+leaf), and the overlay still wins on the next load. The base copy rides in the
+validated-data cache's sidecar (`ConfigCache.get_with_sidecar`) so a cache hit — where
+the overlay is no longer in scope — captures exactly as the disk read did.
+
+A key is NOT captured when it is a field of the section's dataclass, starts with
+an underscore, or appears in one of two explicit maps in `resolution.py`:
+
+| map | why the key is excluded |
+| --- | --- |
+| `_SECTION_KEYS_EMITTED_ELSEWHERE` | `to_dict()` writes it from outside the section dataclass, either conditionally (`slack.channels`, `dm_activation`, `trusted_bot_ids` — absence is a deliberate deletion) or from the top-level object (`slack.observe_max_messages`, `observe_ttl_hours`). |
+| `_SECTION_KEYS_DELIBERATELY_DROPPED` | The build chose not to round-trip it: RENAMED (`knowledge.auto_ingest_doc_links`, still read, canonical spelling written) or RETIRED (the removed local-STT install paths — re-persisting them would keep offering a setting with nothing behind it). |
+
+A key the schema DOES model but validation rejected also stays dropped, because
+re-emitting it would make the bad value permanent and re-warn on every load.
+
+The failure direction is deliberate: forgetting an entry in
+`_SECTION_KEYS_DELIBERATELY_DROPPED` preserves a key that could have been
+dropped, which is cosmetic. The reverse is the data loss the mechanism exists to
+prevent. `test_default_emitted_section_keys_are_all_recognized` guards
+`_SECTION_KEYS_EMITTED_ELSEWHERE` against drift.
+
 ## APIs
 
 ### `KiroCrewConfig.load() -> KiroCrewConfig`
