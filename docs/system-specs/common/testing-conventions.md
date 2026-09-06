@@ -504,7 +504,137 @@ which testpath asked for the workers.
   `loadgroup` runs. Never add the `@group` suffix to an entry — it makes the line match
   in one invocation and silently miss in another.
 - Tests SHOULD be fast (< 1s each)
-- Async tests MUST use `@pytest.mark.asyncio`
+- Async tests MUST use `@pytest.mark.asyncio` — and ONLY async tests. The mark on a
+  plain `def` is accepted silently by pytest-asyncio strict mode and the test then
+  asserts nothing it was meant to `await`; the warning it emits is easy to miss among
+  thousands. A module-level `pytestmark = pytest.mark.asyncio` makes every sync test in
+  the file wrong.
+
+## Side effects: what a full run does to the host, and how to see it
+
+Everything in the Rules above was learned one incident at a time. This section is the
+systematic version: how to MEASURE what the suite does to the machine it runs on, and
+the classes that measurement found on a clean `main` when it was first done (five full
+backend runs, ~89.5k tests each, on one 32-core host).
+
+### The measurement
+
+Attribution by timestamp does not work: under `-n auto` thirty-odd tests are in flight
+whenever a file changes, and the live gateway on a developer box writes the same
+directories the suite must not. What works is an **in-process audit hook**, which names
+the exact test and the exact stack for every write outside the sanctioned roots:
+
+```python
+# audit_home.py -- run: python audit_home.py -q -n0 test/test_foo.py
+import os, sys, traceback
+REAL = (os.path.expanduser("~/.kiro"), os.path.expanduser("~/workplace"), "/workplace")
+def hook(event, args):
+    if event not in ("os.mkdir", "open", "os.rename", "os.remove", "os.symlink"):
+        return
+    path = os.fspath(args[0]) if args and not isinstance(args[0], int) else ""
+    if event == "open" and not any(m in (args[1] or "") for m in "wax+"):
+        return
+    if path.startswith(REAL) and "/scratch/" not in path:
+        sys.stderr.write(f"### {event} {path}\n" + "".join(traceback.format_stack(limit=18)[:-1]))
+sys.addaudithook(hook)
+import pytest
+sys.exit(pytest.main(sys.argv[1:]))
+```
+
+The same hook can watch `subprocess.Popen` (a spawn without `cwd=`), `socket.connect`
+(any non-loopback address is a real network dependency), `os.kill` (a pid that is not a
+child of the worker), and `socket.bind`. Run it as a pytest plugin under `-n auto` to
+survey the whole suite, then re-run each suspect file under `-n0` to get a clean stack.
+Two things the survey CANNOT tell you, both of which misled the first pass:
+
+- **Peak RSS sampled from `/proc/self/statm` is in pages.** A test that fakes
+  `os.sysconf` globally (`lambda _name: 65536`) also changes the page size the sampler
+  multiplies by, so the worker "peaked at +20 GB" while its real maximum RSS was 114 MB.
+  Fake `os.sysconf` for the ONE name under test and delegate the rest to the real
+  function; measure memory with `resource.getrusage(...).ru_maxrss` in a `-n0` run
+  before believing any per-test number taken under xdist.
+- **A hit on a real path in the survey is not attributable to the test it landed on.**
+  The breadcrumb pump below wrote under 106 different files' tests because the thread
+  ran whenever it got scheduled. If a file is clean under `-n0`, look for a background
+  worker, not at the file.
+
+### The classes it found, and the one correct fix for each
+
+- **A background worker resolves its path when it RUNS.** `safety_override`'s breadcrumb
+  publisher hands a job to a long-lived daemon thread; the job called `config_dir()`
+  inside the worker, so it ran after the enqueuing test's `KIROCREW_HOME` monkeypatch was
+  torn down and DELETED the operator's real `~/.kiro/crew/safety_override_last_grant.json`
+  on every full run. Fix: resolve every path on the calling thread and pass it into the
+  job (`_sync_breadcrumb` now closes over `_breadcrumb_path()`), and give the worker a
+  drain: production's `flush_breadcrumb_writes`, wrapped by `test/conftest.py`'s
+  `drain_breadcrumb_writes()` (which raises on a starved worker) and called at teardown
+  while the pin is still in force. When you add a queue-fed worker, ask what it resolves
+  lazily; the answer must be "nothing".
+- **Import must not mutate the host.** `model_registry` and `acp.seed_provenance` called
+  `config_dir()` at import to load a cache sidecar, and `config_dir()` is
+  resolve-AND-maintain: it `mkdir`s the home and refreshes the recovery breadcrumb. Every
+  test collector, and every read-only tool, therefore created `~/.kiro/crew`. Fix:
+  `config.paths.peek_data_home()` resolves the same home without creating it; readers use
+  it, writers keep `config_dir()`. `test_model_registry.py::TestImportDoesNotCreateTheDataHome`
+  imports the package in a fresh interpreter with an empty `$HOME` and asserts nothing
+  appeared.
+- **A second default that the data-home pin does not cover.** `workspace_root()` falls
+  back to `~/workplace/kirocrew-workspace`, not to anything under `KIROCREW_HOME`, so 19
+  files created the operator's real workspace and three wrote real `cli.json`/outbox files
+  into it through `create_provider_factory(session_key=...)`. `kiro_sessions_dir()` is the
+  same shape for kiro-cli's transcript store: session teardown deleted `sA.json` from the
+  operator's real `~/.kiro/sessions/cli`. Both are now pinned per test by the rootdir
+  conftest (`KIROCREW_WORKSPACE`, `_sessions_dir_override`), and
+  `test_host_isolation_floor.py` ratchets them. When you add a resolver with its own
+  default, add it to the floor and the ratchet in the same change.
+- **The checkout's own git dir.** A watcher that ran `git -C ""` (an empty clone path)
+  operated on whatever repository contained the process CWD — the real checkout's
+  `.git/info`. An empty path is not "no repository"; refuse it (`pr_watchers` now returns
+  early when no clone is configured).
+- **Fixed `/tmp/<name>` paths race across files.** `test_review_pool.py` wrote `/tmp/x`
+  and `test_deploy_round3_fixes.py` `rmtree`'d it; under xdist whichever ran second
+  decided the other's outcome. There is no fixed name that is safe under `-n auto`; use
+  `tmp_path`, and monkeypatch the constant at its defining module when production owns
+  the name.
+- **Writes into `src/`.** Skill registration created symlinks inside
+  `src/kiro_crew/apps/builtins/*/skills/`, a task runner wrote `runs.json` relative to
+  CWD, a child interpreter left `__pycache__` in the tree, and hypothesis kept its
+  example database at the repo root. `pytest_configure` now points hypothesis at the
+  per-user cache dir (`~/.cache/kirocrew/hypothesis`), where its shrunk counterexamples
+  still persist across runs; the rest are the CWD rule above, applied.
+- **Real network.** Five system-handler test files reached `8.8.8.8:80` (a local-IP probe
+  in `handlers_system`), the Webex client fetched `webexapis.com`, and the Slack config
+  save handlers validated a pasted secret against Webex and Azure AD. Each passes on a
+  connected host and fails on a firewalled runner. Stub at the seam the code reads
+  (`handlers_system.socket.socket`, `fetch_message`, `_validate_webex_token`).
+- **A module-global set of asyncio tasks outlives its loop.** `source_providers`
+  tracked visibility-refresh tasks in a module-global set whose done-callback never fires
+  for a task whose loop was torn down under it; the next test, on a fresh loop, gathered
+  the set and got `Future belongs to a different loop`. Production now prunes entries
+  bound to a loop that is not the running one before adding; the test module clears the
+  set per test. Any module-global collection of futures/tasks needs both halves.
+- **Ratchets that re-parse the tree per test.** Fourteen files `rglob`+`ast.parse`d all
+  ~1,300 modules under `src/` once per TEST (15–30 s each, ~10 CPU-minutes per run).
+  Cache the derived facts once per module: `test/source_corpus.py` for scans its filters
+  fit, or an `lru_cache` keyed on the tree root (so a test that points the scan at a fake
+  tree under `tmp_path` gets its own entry). Bound the retention — the corpus helper
+  exposes `_clear_caches()` for a module-scoped teardown, because ~160 MB of parsed source
+  held for the life of the worker is paid by every later test on it.
+
+### Coverage that only looks like coverage
+
+- `AsyncMock()` for an object with SYNC methods: every sync call site then gets a
+  coroutine it never awaits, and the test passes while `RuntimeWarning: coroutine ...
+  was never awaited` is attributed to whichever later test triggers GC. Build the mock
+  with `spec=` (`AsyncMock(spec=SessionManager)`) so sync attributes come back as
+  `MagicMock`, or set them explicitly.
+- A `skipif` whose predicate depends on load — a capability probe with a wall-clock
+  timeout skipped two `test_worktree_create.py` tests in two of five runs. A skip that
+  flips is coverage that silently comes and goes; compute the verdict once per session
+  without a timeout.
+- A resolver with a memo that an earlier test on the same worker warmed
+  (`browser_cli.cli_path()` returned the developer's mise shim after `HOME` and `PATH`
+  were pinned). Pin every input the resolver reads AND reset its cache in the test.
 
 ## Running the suite: the defaults, and how to narrow safely
 
@@ -882,7 +1012,7 @@ verify the threshold against a mutated implementation rather than reasoning abou
 
 ## Keeping the suite fast
 
-The suite is ~56.5k tests. At that count a per-test cost is multiplied by 56,500, so
+The suite is ~89.5k tests. At that count a per-test cost is multiplied by 89,500, so
 setup overhead, not any single slow test, is what dominates. Profile before optimizing:
 
 ```bash
@@ -900,7 +1030,7 @@ hour earlier is not a baseline.
 ### The three highest-leverage patterns
 
 1. **Audit what the autouse fixtures cost, before anything else.** Every one of them is
-   paid ~56.5k times, so a few milliseconds there outweighs any single slow test. Two
+   paid ~89.5k times, so a few milliseconds there outweighs any single slow test. Two
    things to look for: a fixture requesting a fixture it never uses (one unused
    `tmp_path` allocated a directory for every test in the suite), and repeated
    `tmp_path_factory.mktemp` calls, which pick a numbered suffix by scanning the whole

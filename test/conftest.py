@@ -58,8 +58,6 @@ settings.register_profile("default", max_examples=20, suppress_health_check=[Hea
 settings.register_profile("thorough", max_examples=100)
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 
-# Ensure .hypothesis/tmp exists (build environment may not have it)
-os.makedirs(os.path.join(os.path.dirname(__file__), "..", ".hypothesis", "tmp"), exist_ok=True)
 
 _HAS_GIT = shutil.which("git") is not None
 
@@ -259,6 +257,26 @@ def _windows_restrict_to_owner_stub(request, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _release_source_corpus_after_module():
+    """Drop ``test/source_corpus.py``'s whole-tree caches at every module's teardown.
+
+    The corpus helper memoizes the raw and NFKC-normalized text of every module
+    under ``src/`` (~160 MB) the first time any ratchet in a module asks for it,
+    and an ``lru_cache`` global otherwise lives for the rest of the xdist
+    worker -- paid by every later test on that worker. Module scope keeps the
+    sharing the ratchets rely on (one parse per module) while bounding the
+    retention to the module that needed it. Import is deferred and tolerant so a
+    module that never touches the corpus pays nothing.
+    """
+    yield
+    try:
+        from source_corpus import _clear_caches
+    except ImportError:  # pragma: no cover - a partial checkout without the helper
+        return
+    _clear_caches()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_aim_skills_dir(monkeypatch):
     """Prevent SkillsLoader from discovering edition-contributed skill roots.
@@ -433,6 +451,35 @@ def _release_stt_engine():
     stt_engine._engine = None
 
 
+def absent_sysconf(name):
+    """Stand-in for a missing ``os.sysconf`` (Windows has none).
+
+    A test that fakes ONE ``os.sysconf`` name must delegate every other name to
+    the real function -- and on Windows there is no real function to delegate to.
+    Capturing ``getattr(os, "sysconf", absent_sysconf)`` gives the delegating fake
+    the same "unavailable" answer production sees there, instead of an
+    ``AttributeError`` at capture time.
+    """
+    raise ValueError(f"os.sysconf unavailable for {name!r}")
+
+
+def drain_breadcrumb_writes(timeout: float = 5.0) -> None:
+    """Block until every queued safety-override breadcrumb publish has run.
+
+    ``safety_override.flush_breadcrumb_writes`` is production's best-effort
+    drain and reports a bool; a test that relies on the drain to prove the
+    write landed inside its own context needs certainty, so a drain that does
+    not complete raises instead of returning a value a fixture could ignore.
+    """
+    from kiro_crew.safety_override import flush_breadcrumb_writes
+
+    if not flush_breadcrumb_writes(timeout):
+        raise TimeoutError(
+            f"breadcrumb worker did not drain within {timeout}s; a queued publish "
+            "may still run after this test's fixtures tear down"
+        )
+
+
 @pytest.fixture(autouse=True)
 def _reset_safety_override_between_tests():
     """Reset the SafetyOverride singleton between tests to prevent state leaking.
@@ -450,6 +497,18 @@ def _reset_safety_override_between_tests():
     _reset_safety_override()
     _reset_yolo_policy_state()
     yield
+    # Drained BEFORE the reset below, and (by pytest's fixture teardown order --
+    # finalizers run in reverse of setup order, so a fixture set up AFTER this
+    # one, e.g. a test's own ``monkeypatch.setenv("KIROCREW_HOME", ...)``, tears
+    # down BEFORE this line runs) while any KIROCREW_HOME the test itself set is
+    # still in effect. A publish enqueued mid-test resolves ``config_dir()`` on
+    # the CALLING thread at enqueue time (see ``_sync_breadcrumb``), but the
+    # worker that runs the write is on its own thread and can still be
+    # mid-flight when the test function returns. Waiting here for that worker to
+    # finish, before this fixture's own KIROCREW_HOME-independent state reset,
+    # closes the window that let a delayed write land on the real operator home
+    # instead of the test's temp dir (found in review).
+    drain_breadcrumb_writes()
     _reset_safety_override()
     _reset_yolo_policy_state()
 

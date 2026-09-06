@@ -482,6 +482,28 @@ def _apply_mcp_process_counts(data: dict[str, object]) -> None:
     data.update(_proc_scan_cache)
 
 
+def _local_ip() -> str:
+    """The address the kernel would source an outbound packet from, best-effort.
+
+    A UDP socket ``connect`` sends nothing (no handshake for a datagram socket),
+    it only selects a route, so ``getsockname`` yields the interface address
+    without a packet leaving the host; ``8.8.8.8`` is just a public address any
+    default route covers. Falls back to loopback when there is no route or no
+    network stack (an offline runner, a sandbox). The one place system-info
+    rendering reaches for the network, kept as its own seam so a test can pin
+    the answer instead of stubbing ``socket.socket`` -- replacing that CLASS
+    breaks ``isinstance`` checks inside asyncio's proactor loop on Windows.
+    """
+    try:
+        # Context manager guarantees the socket fd is closed on every path,
+        # including when connect()/getsockname() raise (CWE-772 fd leak).
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return str(s.getsockname()[0])
+    except Exception:
+        return "127.0.0.1"
+
+
 def _collect_system_metrics() -> dict[str, object]:
     """Collect system metrics synchronously (runs in thread pool).
 
@@ -586,15 +608,7 @@ def _collect_system_metrics() -> dict[str, object]:
                 cpu_pct = 0
     data["cpu_pct"] = cpu_pct
 
-    # Local IP address
-    try:
-        # Context manager guarantees the socket fd is closed on every path,
-        # including when connect()/getsockname() raise (CWE-772 fd leak).
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            data["ip"] = s.getsockname()[0]
-    except Exception:
-        data["ip"] = "127.0.0.1"
+    data["ip"] = _local_ip()
 
     # Network bytes + speed — cross-platform
     try:

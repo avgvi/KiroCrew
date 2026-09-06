@@ -53,7 +53,7 @@ from typing import Any
 
 from kiro_crew import platform_compat
 from kiro_crew.atomic_write import atomic_write
-from kiro_crew.config.paths import config_dir
+from kiro_crew.config.paths import config_dir, peek_data_home
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +105,15 @@ _LOCK_FILENAME = ".settings_seeds.lock"
 def _sidecar_path() -> Path:
     """Path to the seed-provenance sidecar under Crew's data home.
 
-    ``config_dir()`` is resolved per call rather than folded into a module
-    constant, so ``KIROCREW_HOME`` and test overrides are honoured on every
-    access instead of being frozen at first resolution. The import-time
-    ``_load()`` does resolve it once, to hydrate ``_RECORDS`` from disk;
-    resolving per call is what keeps every later access following the current
-    override.
+    Resolved per call rather than folded into a module constant, so
+    ``KIROCREW_HOME`` and test overrides are honoured on every access instead of
+    being frozen at first resolution. Resolved through ``peek_data_home()``, not
+    ``config_dir()``: the import-time ``_load()`` only needs to know whether the
+    file exists, and importing this module must not create ``~/.kiro/crew`` on
+    the host. The one writer, :func:`_persist`, creates the directory itself
+    before taking its lock beside the sidecar.
     """
-    return config_dir() / "settings_seeds.json"
+    return peek_data_home() / "settings_seeds.json"
 
 
 def _key(path: Path | str) -> str:
@@ -194,7 +195,7 @@ def _cross_process_lock() -> Iterator[None]:
     that as a failed persist (``False``) — the same honest "grant not durable"
     outcome a failed write already gives, never a silent lost record.
     """
-    lock_file = _sidecar_path().parent / _LOCK_FILENAME
+    lock_file = config_dir() / _LOCK_FILENAME
     fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
     try:
         platform_compat.acquire_lock(fd, exclusive=True)

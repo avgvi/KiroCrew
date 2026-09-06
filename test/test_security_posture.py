@@ -31,6 +31,23 @@ from kiro_crew.security_posture import (
     build_posture_snapshot_async,
 )
 
+
+@pytest.fixture(autouse=True, scope="module")
+def _drop_source_corpus_after_module():
+    """Release the whole-tree corpus this module's census pulls in.
+
+    ``_package_baseline_log_census`` below is its own ``lru_cache(maxsize=1)``
+    wrapping a ``source_corpus.parsed_candidates`` walk, so it holds two
+    references on the corpus: its own cached census AND (via
+    ``source_corpus``) the ~160 MB raw+NFKC text cache. ``test/conftest.py``
+    releases the corpus itself at every module's teardown; this releases the
+    census on top. Module teardown rather than per test, because the two tests
+    here deliberately share the census cache within the module.
+    """
+    yield
+    _package_baseline_log_census.cache_clear()
+
+
 # ANY use of a redactor, including every wrapper.
 #
 # This alternation is load-bearing: the guard below can only classify a module it

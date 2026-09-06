@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from kiro_crew import model_registry as mr
 
 
@@ -596,3 +598,63 @@ class TestAdvertisedModelCache:
             mr, "_ADVERTISED_MODELS", {"claude_code": ["global.anthropic.claude-opus-5[1m]"]}
         )
         assert mr.to_provider_id("claude-opus-5", "claude_code") == "claude-opus-5"
+
+
+class TestImportDoesNotCreateTheDataHome:
+    """Importing the registry must not ``mkdir`` the data home.
+
+    ``_load_kiro_windows`` runs at import to pick up the persisted window
+    sidecar. Resolving that path through ``config_dir()`` would CREATE
+    ``~/.kiro/crew`` (and refresh the recovery breadcrumb) as a side effect of a
+    plain import -- observed as a real-host write from every test collector, and
+    a surprise for any read-only tool that imports the package. The import must
+    only ever peek at the path.
+    """
+
+    def test_a_fresh_interpreter_import_leaves_an_absent_home_absent(self, tmp_path):
+        import subprocess
+        import sys
+
+        home = tmp_path / "home"
+        home.mkdir()
+        # The audit hook names the call site on failure, so a regression is
+        # diagnosable from the assertion message alone.
+        probe = (
+            "import os, sys, traceback\n"
+            "def hook(ev, args):\n"
+            "    if ev == 'os.mkdir' and str(args[0]).startswith(sys.argv[1]):\n"
+            "        sys.stderr.write('mkdir %s\\n' % args[0])\n"
+            "        sys.stderr.write(''.join(traceback.format_stack(limit=12)[:-1]))\n"
+            "sys.addaudithook(hook)\n"
+            "import kiro_crew.model_registry\n"
+            "from kiro_crew.config import paths\n"
+            "sys.exit(1 if paths._default_home().exists() else 0)\n"
+        )
+        env = {k: v for k, v in os.environ.items() if k != "KIROCREW_HOME"}
+        env["HOME"] = str(home)
+        env["USERPROFILE"] = str(home)
+        proc = subprocess.run(
+            # ``-B``: the child imports the source package; without it the import
+            # leaves ``__pycache__`` in the checkout (no-test-side-effects).
+            [sys.executable, "-B", "-c", probe, str(home)],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert not (home / ".kiro").exists()
+
+    def test_the_sidecar_path_follows_the_data_home_without_creating_it(
+        self, tmp_path, monkeypatch
+    ):
+        from kiro_crew.config import paths
+
+        data = tmp_path / "data"
+        monkeypatch.setenv("KIROCREW_HOME", str(data))
+        assert mr._kiro_windows_cache_path() == data.resolve() / "model_windows.json"
+        assert mr._advertised_models_cache_path() == data.resolve() / "provider_models.json"
+        assert not data.exists(), "resolving a sidecar path must not create the home"
+        assert mr._kiro_windows_cache_path().parent == paths.config_dir()

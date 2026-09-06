@@ -7314,7 +7314,19 @@ def schedule_visibility_refresh(
             # the redundant spawn.
             continue
         _visibility_inflight.add(key)
-        task = asyncio.get_running_loop().create_task(
+        running_loop = asyncio.get_running_loop()
+        # A task that never finished before its loop was torn down (a caller
+        # closed the loop without awaiting/cancelling the task first) never
+        # runs its done-callback, so ``discard`` never fires and it lingers in
+        # this module-global set forever, bound to a now-dead loop. A later
+        # caller on a DIFFERENT loop that gathers the set then crashes with
+        # "Future belongs to a different loop". Prune those dead-loop entries
+        # before adding this task, so the set only ever holds tasks the current
+        # loop can legally await.
+        for stale_task in list(_VISIBILITY_TASKS):
+            if stale_task.get_loop() is not running_loop:
+                _VISIBILITY_TASKS.discard(stale_task)
+        task = running_loop.create_task(
             _refresh_repo_visibility(ref, on_update, prev_public_override=prev_public_override)
         )
         _VISIBILITY_TASKS.add(task)

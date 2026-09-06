@@ -17265,6 +17265,19 @@ class TestRunChatTransientRetry:
     def _client(stream):
         client = AsyncMock()
         client.context_usage_pct = MagicMock(return_value=0.0)
+        # These are sync accessors on the real provider client; _run_chat
+        # calls them without awaiting, so a bare AsyncMock attribute here
+        # would leave an unawaited coroutine per turn.
+        client.context_window_tokens = MagicMock(return_value=0)
+        client.context_used_tokens = MagicMock(return_value=0)
+        client.mcp_session_report = MagicMock(return_value=None)
+        client.pop_pending_oauth_requests = MagicMock(return_value=[])
+        client.available_models = MagicMock(return_value=[])
+        # _drain_session_init_oauth_requests reaches pop_pending_oauth_requests
+        # via client.client (the nested ACP client), not the front client
+        # itself; leaving client.client as a bare AsyncMock attribute would
+        # make that nested lookup resolve to another never-awaited coroutine.
+        client.client = None
         client.stream = stream
         client.stream_command = stream
         # The poisoned-conversation canary reads the session's served model

@@ -366,7 +366,6 @@ test/metrics/test_cost_breakdown.py
 test/metrics/test_gateway_http_metrics.py
 test/metrics/test_generation_disclosure.py
 test/metrics/test_mcp_gateway_metrics.py
-test/metrics/test_provider_bucket_views.py
 test/metrics/test_schema.py
 test/metrics/test_startup_channel_attrs.py
 test/metrics/test_telemetry_titles.py
@@ -777,7 +776,6 @@ test/test_knowledge_items_source_filter.py
 test/test_knowledge_kiroignore.py
 test/test_knowledge_source_spend.py
 test/test_knowledge_sync_local_file.py
-test/test_lazy_data_home_paths.py
 test/test_learn.py
 test/test_lesson_contradiction.py
 test/test_lesson_ranking.py

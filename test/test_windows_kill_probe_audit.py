@@ -33,6 +33,7 @@ invisible to it. This test reads the whole tree on every run.
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 _SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "kiro_crew"
@@ -85,8 +86,14 @@ def _enclosing_functions(tree: ast.AST) -> list[tuple[str, ast.AST]]:
     return out
 
 
-def _find_raw_probes() -> dict[str, list[int]]:
-    """Map ``file::function`` -> line numbers of raw signal-0 probes."""
+@functools.lru_cache(maxsize=1)
+def _find_raw_probes() -> dict[str, tuple[int, ...]]:
+    """Map ``file::function`` -> line numbers of raw signal-0 probes.
+
+    Cached: the rglob + ast.parse of the whole tree is the same answer for
+    every one of this module's three tests, and the source tree cannot change
+    mid-run. Values are tuples so a cached entry cannot be mutated in place.
+    """
     found: dict[str, list[int]] = {}
     for path in sorted(_SRC_ROOT.rglob("*.py")):
         rel = path.relative_to(_SRC_ROOT).as_posix()
@@ -111,7 +118,7 @@ def _find_raw_probes() -> dict[str, list[int]]:
             if isinstance(sub, ast.Call) and _is_signal_zero_probe(sub):
                 if not any(sub.lineno in span for span in func_line_spans):
                     found.setdefault(f"{rel}::<module>", []).append(sub.lineno)
-    return found
+    return {k: tuple(v) for k, v in found.items()}
 
 
 def test_no_ungated_signal_zero_probe() -> None:

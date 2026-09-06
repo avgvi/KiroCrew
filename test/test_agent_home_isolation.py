@@ -662,7 +662,7 @@ def test_pod_target_is_private_so_the_guard_stands_aside(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------
 # Transcripts follow the same home as the specs
 # --------------------------------------------------------------------------
-def test_sessions_dir_follows_kiro_home(monkeypatch, tmp_path):
+def test_sessions_dir_follows_kiro_home(monkeypatch, tmp_path, unpinned_kiro_sessions_dir):
     """The transcripts dir must move WITH the agent dir, or resume breaks.
 
     ``KIRO_HOME`` is directory-wide: kiro-cli writes transcripts under it. If
@@ -680,7 +680,7 @@ def test_sessions_dir_follows_kiro_home(monkeypatch, tmp_path):
     assert kiro_agents_dir() == root / "agents"
 
 
-def test_sessions_dir_defaults_to_dot_kiro(monkeypatch):
+def test_sessions_dir_defaults_to_dot_kiro(monkeypatch, unpinned_kiro_sessions_dir):
     _no_overrides(monkeypatch)
     from kiro_crew.config.paths import kiro_sessions_dir
 

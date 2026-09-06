@@ -157,20 +157,28 @@ _SUPPLEMENTARY_WINDOWS: dict[str, int] = {
 }
 
 
-def _kiro_windows_cache_path() -> Path:
-    """Path to the persisted kiro-window sidecar under the data home.
+def _sidecar_path(name: str) -> Path:
+    """A data-home sidecar path, resolved WITHOUT creating the data home.
 
-    Resolved lazily (not at import) so tests / KIROCREW_HOME overrides are
-    honoured, and so a home-resolution failure never breaks module import.
-    Routes through ``config_dir()`` (deferred import of the stdlib-only
-    ``config.paths`` leaf to avoid a cycle) so it follows the data-home move to
-    ``~/.kiro/crew`` instead of writing to the now-archived legacy ``~/.kirocrew``
-    — where no reader would ever consult it and which would re-create the very
-    directory the migration just archived.
+    ``config_dir()`` is resolve-and-maintain: it ``mkdir``s the home and
+    refreshes the recovery breadcrumb. The import-time loads below only need to
+    know whether a cache file exists, and importing this module must not mutate
+    the host: a test collector imports it before any isolation fixture runs, and
+    a read-only tool must not create ``~/.kiro/crew`` as a side effect of an
+    import. ``peek_data_home()`` resolves the same home ``config_dir()`` would and
+    stops there. The writers need no directory creation of their own:
+    ``atomic_write`` creates the parent. Deferred import of the stdlib-only
+    ``config.paths`` leaf avoids a cycle, and following the data home keeps the
+    sidecars out of the archived legacy ``~/.kirocrew``.
     """
-    from kiro_crew.config.paths import config_dir
+    from kiro_crew.config.paths import peek_data_home
 
-    return config_dir() / "model_windows.json"
+    return peek_data_home() / name
+
+
+def _kiro_windows_cache_path() -> Path:
+    """Path to the persisted kiro-window sidecar under the data home."""
+    return _sidecar_path("model_windows.json")
 
 
 def _load_kiro_windows() -> None:
@@ -290,15 +298,8 @@ _PROVIDER_ID_PREFIXES: tuple[str, ...] = (
 
 
 def _advertised_models_cache_path() -> Path:
-    """Path to the persisted advertised-model sidecar under the data home.
-
-    Resolved lazily (not at import), for the same reasons as
-    :func:`_kiro_windows_cache_path`: honour ``KIROCREW_HOME`` / test overrides
-    and never let home resolution break module import.
-    """
-    from kiro_crew.config.paths import config_dir
-
-    return config_dir() / "provider_models.json"
+    """Path to the persisted advertised-model sidecar under the data home."""
+    return _sidecar_path("provider_models.json")
 
 
 def _load_advertised_models() -> None:

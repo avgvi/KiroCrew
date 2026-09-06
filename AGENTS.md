@@ -57,7 +57,7 @@ in the **same commit** when you change what it documents.
 | themes | [themes](docs/system-specs/modules/themes.md) + [theming-contract](website/docs/theming-contract.md) |
 | anything under `website/` | [`website/AGENTS.md`](website/AGENTS.md) |
 | user-facing strings, dates, numbers, sort order | [i18n-catalog](website/docs/i18n-catalog.md) (authoring) + [i18n-gates](docs/ci/i18n-gates.md) (CI) |
-| tests: flakes, speed, fixtures, sharding, side effects, conftest isolation | [testing-conventions](docs/system-specs/common/testing-conventions.md) + the [writing-tests](src/kiro_crew/builtin_skills/kirocrew-dev/writing-tests/SKILL.md) skill |
+| tests: flakes, hangs, speed, memory, fixtures, sharding, side effects, conftest isolation, Windows | [testing-conventions](docs/system-specs/common/testing-conventions.md) + the [writing-tests](src/kiro_crew/builtin_skills/kirocrew-dev/writing-tests/SKILL.md) skill; frontend and Electron tests: [website/docs/testing.md](website/docs/testing.md) |
 | browser E2E | [e2e-gate](docs/ci/e2e-gate.md) |
 | proving a worktree change against an isolated running gateway | [worktree-verification-recipes](docs/guides/worktree-verification-recipes.md) |
 | CI, PR flow, review gates, commit messages | [ci-and-reviews](docs/ci/ci-and-reviews.md) + [CONTRIBUTING.md](CONTRIBUTING.md) |
@@ -207,9 +207,12 @@ python -m pytest
   --max-worker-restart=2`; a bare override silently drops `--dist loadgroup` and
   scatters `@pytest.mark.xdist_group` tests into flaky races.
 
-Gates, flake classes, the conftest isolation floor and the traps that are invisible
-when reading a test: [code-style](docs/system-specs/common/code-style.md) +
-[testing-conventions](docs/system-specs/common/testing-conventions.md).
+Gates, the six flake classes, the conftest isolation floor and the traps that are
+invisible when reading a test: [code-style](docs/system-specs/common/code-style.md) +
+[testing-conventions](docs/system-specs/common/testing-conventions.md). A test that
+can block forever is a lost RUN, not a failed test: on Windows pytest-timeout kills
+the xdist worker, and with `--max-worker-restart=0` one unbounded `await` aborts the
+whole job (class 6). Frontend and Electron: [website/docs/testing.md](website/docs/testing.md).
 
 ## Cross-platform
 
