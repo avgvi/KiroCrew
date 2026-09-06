@@ -1,0 +1,25 @@
+name: Internal Content Scan Gate
+
+# This repository's caller for the shared gate. Onboarding another repo is this
+# file, unchanged.
+#
+# merge_group, not pull_request: a fork PR gets no OIDC token, so it could not
+# fetch the ruleset and its scan would be advisory at best. A merge-queue run
+# executes in the base repo and DOES get a token, so a fork's added lines get a
+# real verdict before they land. The push trigger covers anything reaching main
+# without the queue.
+on:
+  merge_group:
+  push:
+    branches: [main]
+
+jobs:
+  scan:
+    uses: ./.github/workflows/internal-content-scan.yml
+    # These have to be granted HERE. A reusable workflow's token permissions are
+    # capped by the calling job and the callee cannot elevate them, so a caller
+    # with `permissions: {}` issues no OIDC token and the role assumption fails.
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit

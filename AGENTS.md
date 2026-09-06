@@ -23,7 +23,8 @@ JSON-RPC) plus MCP tools.
 Full map: [overview](docs/architecture/overview.md). This repo is the de-Amazoned
 public fork of an internal package; what must never come back is
 [oss-fork-boundaries](docs/system-specs/oss-fork-boundaries.md), gated by
-`scripts/scrub-lint.sh` and the `no-new-builtin-apps` rule in `AUTOSDE.yaml`.
+`scripts/scrub-lint.sh`, the `internal-content-scan` check, and the
+`no-new-builtin-apps` rule in `AUTOSDE.yaml`.
 
 ## Read before you touch
 

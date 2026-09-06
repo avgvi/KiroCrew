@@ -83,3 +83,42 @@ removed system in order to forbid it. Most entries are scoped to one file and on
 pattern, so a marker that escapes into a third file is still caught — but **`^docs/` is
 a whole-tree exemption**, so this doc's own list passes and no internal marker anywhere
 under `docs/` is gated. Keeping `docs/` clean is therefore a convention, not a gate.
+
+## The gate that replaces it: `internal-content-scan`
+
+`.github/workflows/internal-content-scan.yml` runs on `merge_group` and on pushes
+to `main`. It checks **only the lines a change adds**, against a marker list that
+is deliberately **not in this repo** — it lives in a private bucket and is fetched
+per run over GitHub's OIDC identity, with no long-lived AWS keys anywhere.
+
+Three things follow from that, and they are the point rather than side effects:
+
+- **Pre-existing content is out of scope.** You are never asked to clean up
+  someone else's line to land yours, and adopting the gate needed no repo-wide
+  cleanup first.
+- **A list kept outside the repo it polices cannot be read off to find out what to
+  avoid writing.** `scrub-lint.sh` hardcoded its wordlists here, which is also how
+  they drifted for months without anyone noticing. Do not add wordlists back to
+  `scripts/`.
+- **A false positive is fixed by fixing the rule**, not by adding yourself to an
+  exemption file — there isn't one. The rule lives in the private
+  `KiroReleaseGateCDK` package; say so on the PR and it gets fixed at the source.
+
+Reading a failure:
+
+```
+docs/foo.md:42:15: [internal-domain-amazon] see https://<internal-wiki-host>/SomePage
+```
+
+Path, line, column, the rule id, and your own added line. The real output shows
+the host verbatim; it is redacted here so this file does not carry the thing it
+warns about.
+
+Exit 1 means remove the marker from your change. Exit 2 means the gate could not
+reach a verdict — a broken ruleset, or a diff that was not intact. That is not
+your change's fault and not something to retry past. It fails the build on
+purpose: a scan that reaches no conclusion must never be read as a pass, which is
+exactly how the check it replaces reported `skipped` and counted it as success on
+every run.
+
+`scrub-lint.sh` still runs alongside it for now.
