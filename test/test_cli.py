@@ -146,12 +146,16 @@ class TestDoctor:
 
         monkeypatch.setattr(_doc.sandbox, "detect_backend", lambda config_mode="auto": "namespace")
 
-    def test_doctor_with_kiro(self, tmp_path):
+    def test_doctor_with_kiro(self, tmp_path, monkeypatch):
+        import kiro_crew.cli_doctor as _doc
+
         agent_file = tmp_path / "kirocrew.json"
         # A minimally healthy agent config so doctor walks the whole MCP
         # section cleanly and doesn't exit on "missing from mcpServers".
         _healthy_agent_file(agent_file)
         mock_run = MagicMock(returncode=0, stdout="kiro-cli 1.0.0", stderr="")
+        # Left unpatched this mutates the process PATH for every later test.
+        monkeypatch.setattr(_doc, "ensure_ffmpeg_in_path", lambda: None)
         with (
             patch(
                 "kiro_crew.cli_doctor.shutil.which",
@@ -283,10 +287,13 @@ class TestDoctor:
         assert f"  engine:      {expected_mark} no recogniser here" in out
         assert f"  ffmpeg:      {expected_mark} not found" in out
 
-    def test_doctor_reports_platform_boot_error_without_crashing(self, tmp_path, capsys):
+    def test_doctor_reports_platform_boot_error_without_crashing(
+        self, tmp_path, capsys, monkeypatch
+    ):
         """A PlatformCompositionError from boot must be REPORTED by the doctor,
         not crash it — the doctor is the tool that diagnoses a broken setup, so
         it has to survive the very failure it explains."""
+        import kiro_crew.cli_doctor as _doc
         from kiro_crew.platform import PlatformCompositionError
 
         agent_file = tmp_path / "kirocrew.json"
@@ -295,6 +302,8 @@ class TestDoctor:
         boot_err = PlatformCompositionError(
             "profile=amazon resolved no companion; set KIROCREW_PROFILE=standalone"
         )
+        # Left unpatched this mutates the process PATH for every later test.
+        monkeypatch.setattr(_doc, "ensure_ffmpeg_in_path", lambda: None)
         with (
             patch(
                 "kiro_crew.cli_doctor.shutil.which",

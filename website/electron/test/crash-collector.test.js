@@ -23,9 +23,14 @@ const {
   MAX_CRASH_LOG_LINES,
 } = require("../crash-collector");
 
-const LOGS = "/logs";
-const DUMPS = "/dumps";
-const REPORTS = "/reports";
+// `path.normalize` here, not a bare literal: every file key below is built
+// with `path.join`, which on Windows collapses `/reports` to `\reports` — a
+// raw `"/reports"` passed straight to `collectCrashReports` as
+// `diagnosticReportsDir` then mismatches the backslash-prefixed keys in
+// `fakeFs.readdirSync`'s prefix match and reads back empty.
+const LOGS = path.normalize("/logs");
+const DUMPS = path.normalize("/dumps");
+const REPORTS = path.normalize("/reports");
 // The name the packaged bundle, its executable, and therefore every crash
 // artifact on disk actually carry: electron-builder derives all three from
 // `build.productName`, which is the joined form. The collector is handed the

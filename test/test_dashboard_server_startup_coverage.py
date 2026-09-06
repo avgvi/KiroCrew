@@ -40,6 +40,9 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from kiro_crew.browser_cli import launch as browser_cli_launch
+from kiro_crew.browser_cli import snapshots as browser_cli_snapshots
+from kiro_crew.browser_cli import token as browser_cli_token
 from kiro_crew.dashboard import server as srv
 
 requires_unix_socket = pytest.mark.skipif(
@@ -258,6 +261,24 @@ async def _start_dashboard(tmp_path: Path, monkeypatch, **kwargs: Any) -> Any:
     # would bind a real socket in the data home.
     monkeypatch.setattr(srv, "_start_unix_site", AsyncMock(return_value=None))
     spies = _neutralise_outside_process_work(monkeypatch)
+    # start_dashboard mutates os.environ directly (browser_cli_snapshots /
+    # browser_cli_token / browser_cli_launch cli_env_overrides()) so descendant
+    # `playwright-cli` invocations inherit them -- real, deliberate production
+    # behavior, not a bug. monkeypatch has no visibility into a raw
+    # os.environ.update(), so snapshot+restore the concrete keys it can touch
+    # here instead. `delenv(raising=False)` on an ABSENT key registers no undo,
+    # so a value production writes afterwards would survive teardown; setenv
+    # to "" first records the absence and restores it, and start_dashboard
+    # overwrites the placeholder before anything reads it.
+    for _leak_key in (
+        browser_cli_snapshots.OUTPUT_DIR_ENV,
+        browser_cli_token.TOKEN_ENV,
+        browser_cli_launch.CONFIG_ENV,
+    ):
+        _prior = os.environ.get(_leak_key)
+        monkeypatch.setenv(_leak_key, "" if _prior is None else _prior)
+        if _prior is None:
+            monkeypatch.delenv(_leak_key, raising=False)
 
     sessions = MagicMock(count=0)
     sessions.remove = AsyncMock()

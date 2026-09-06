@@ -25,14 +25,21 @@ import { fileURLToPath } from 'node:url'
 const WEBSITE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const RULE_ID = 'approval-one-shot/no-inline-one-shot-decision'
 
+// Built once for the whole file, not per call: constructing an ESLint engine
+// re-parses eslint.config.js and the full plugin graph, and this file lints
+// 17 snippets through it. Re-creating it per `lint()` call paid that cost 17
+// times and was slow enough under load to hit the file's 15s testTimeout
+//. The config and its rules are stateless per lint call, so sharing
+// one engine changes nothing about what is asserted.
+const engine = new ESLint({
+  cwd: WEBSITE_ROOT,
+  overrideConfigFile: 'eslint.config.js',
+  // A snippet must not be able to quietly disable the rule it is testing.
+  allowInlineConfig: false,
+})
+
 /** Lint one snippet through the real `eslint.config.js`, as `npm run lint` does. */
 async function lint(code: string): Promise<ESLint.LintResult['messages']> {
-  const engine = new ESLint({
-    cwd: WEBSITE_ROOT,
-    overrideConfigFile: 'eslint.config.js',
-    // A snippet must not be able to quietly disable the rule it is testing.
-    allowInlineConfig: false,
-  })
   const [result] = await engine.lintText(code, { filePath: path.join(WEBSITE_ROOT, 'src/probe.ts') })
   return result.messages
 }

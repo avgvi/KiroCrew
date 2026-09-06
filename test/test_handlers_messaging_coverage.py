@@ -1774,6 +1774,12 @@ class TestConfigGetHandlers:
     def test_slack_config_get_masks_the_tokens(self, monkeypatch, tmp_path: Path) -> None:
         monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
         monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
+        # load_credentials() propagates .env values into os.environ via
+        # setdefault() so spawned children inherit them (real, deliberate
+        # behavior). monkeypatch.delenv(raising=False) snapshots whatever is
+        # currently there (present or absent) and restores exactly that at
+        # teardown, so this protects the var regardless of what an earlier
+        # test in this worker left behind.
         monkeypatch.delenv("OWNER_ID", raising=False)
         self._isolate(
             monkeypatch,

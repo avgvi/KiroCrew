@@ -1849,6 +1849,13 @@ def _self_test() -> int:
             (root / "docs" / "README.md").write_text("# Docs\n\n- [Ok](ok.md)\n", encoding="utf-8")
             (root / "docs" / "ok.md").write_text("# Ok\n\nBody.\n", encoding="utf-8")
             expected = build(root)
+            if expected is None:
+                # The planter could not create its defect on this host (an
+                # unprivileged Windows shell cannot make a symlink). That is a
+                # gap in what THIS run proved, said out loud -- not a check
+                # that failed to fire, which is what a FAIL here would claim.
+                print(f"  skip {label}: host cannot plant this defect")
+                return
             findings = run(root)
             got = getattr(findings, expected)
             if got:
@@ -1949,7 +1956,7 @@ def _self_test() -> int:
         )
         return "phantom_source_paths"
 
-    def plant_citation_of_a_symlinked_file(root: Path) -> str:
+    def plant_citation_of_a_symlinked_file(root: Path) -> str | None:
         # A symlink is an arbitrary read primitive in a tree a fork PR controls, so
         # it is never indexed -- which makes a citation naming it UNRESOLVABLE, and
         # in a module spec that is a finding. Pointed at a real file in-tree, so
@@ -1960,7 +1967,10 @@ def _self_test() -> int:
         try:
             (pkg / "linked.py").symlink_to(pkg / "real.py")
         except (OSError, NotImplementedError):  # pragma: no cover - Windows
-            return "phantom_source_paths"
+            # No link, no defect: returning the check name here would make
+            # the probe report a check that "did not fire" on a tree that
+            # never contained what it looks for.
+            return None
         spec_dir = root / "docs" / "system-specs" / "modules"
         spec_dir.mkdir(parents=True)
         (root / "docs" / "README.md").write_text(

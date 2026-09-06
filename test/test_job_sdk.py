@@ -461,6 +461,13 @@ class TestCancellingIds:
             release.set()
         run = _wait_terminal(sdk, run_id)
         assert run.status == CANCELLED
+        # The terminal RECORD lands before the worker drops its live entry
+        # (``_execute`` writes, then re-takes the lock to pop), so a read of the
+        # record can return terminal while the entry -- and with it the derived
+        # cancelling flag -- is still a few instructions from disappearing. That
+        # is the documented closing window, not a defect; wait for the drop
+        # itself rather than inferring it from the status.
+        _wait_until(lambda: run_id not in sdk.cancelling_and_live_ids()[1])
         # The worker recorded the outcome and the live entry is gone, so the
         # status now carries the answer and nothing is pending.
         assert sdk.cancelling_and_live_ids()[0] == frozenset()

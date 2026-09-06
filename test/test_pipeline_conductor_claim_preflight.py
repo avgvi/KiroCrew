@@ -12,11 +12,15 @@ regressing back into the old blind spot.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from skill_script_helpers import load_skill_script
+
+from kiro_crew.platform.update_governance import _GIT_LOCATION_VARS
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -2529,13 +2533,19 @@ class TestAgainstRealGit:
     unlanded. One small real repo pins both.
     """
 
-    @pytest.fixture
-    def clone(self, tmp_path):
-        root = tmp_path / "clone"
+    @pytest.fixture(scope="module")
+    def _clone_template(self, tmp_path_factory):
+        """Build the landed/sidetrack clone once per module; ``clone`` copies it.
+
+        Six git subprocesses (~2.3-4.7s) were previously paid on every one of the
+        8 tests below. Module scope is safe because the template is never handed
+        to a test, only copied from via ``shutil.copytree`` -- no test here moves
+        a branch or adds a commit to it, they only read commits already present.
+        """
+        root = tmp_path_factory.mktemp("claim-preflight-seed") / "clone"
         root.mkdir()
 
         def run_git(*args):
-            rc, out, err = 0, "", ""
             rc, out, err = _git(root, list(args))
             assert rc == 0, f"git {args} failed: {err}"
             return out
@@ -2553,6 +2563,18 @@ class TestAgainstRealGit:
         run_git("commit", "-q", "-m", "elsewhere")
         off_main = run_git("rev-parse", "HEAD")
         run_git("checkout", "-q", "main")
+        return root, on_main, off_main
+
+    @pytest.fixture
+    def clone(self, tmp_path, _clone_template):
+        template_root, on_main, off_main = _clone_template
+        root = tmp_path / "clone"
+        shutil.copytree(template_root, root)
+        # A copied checkout reads as "unstaged changes" on Windows (fresh inode/
+        # ctime invalidate the index stat cache); nothing in the template is
+        # uncommitted, so this changes no content and only re-stats the index.
+        rc, _out, err = _git(root, ["reset", "--hard", "HEAD"])
+        assert rc == 0, err
         return root, on_main, off_main
 
     def test_ancestry_distinguishes_landed_from_elsewhere(self, mod, clone):
@@ -2623,6 +2645,38 @@ class TestAgainstRealGit:
         assert got["error"] == "unknown-default-branch"
 
 
+def _fixture_git_env() -> dict[str, str]:
+    """Env for a fixture git call: no host config, templates, hooks, or identity bleed.
+
+    The session/module-scoped template builders below run BEFORE the function-scoped
+    ``_git_identity`` autouse fixture in ``test/conftest.py`` has pinned anything, so
+    they would otherwise read the developer's real ``~/.gitconfig`` -- a
+    ``commit.gpgSign`` aborts the whole template, and a ``core.hooksPath`` or
+    ``init.templateDir`` would EXECUTE host hooks from inside the test run. The
+    ``GIT_DIR`` location family is dropped (the production list, so an exported
+    ``GIT_DIR`` from a hook or ``rebase --exec`` cannot retarget the fixture), both
+    template channels are emptied, and identity is supplied. Deliberately NOT
+    ``git_command_env()``: that pins ``diff.external`` empty for commands that never
+    diff, and these fixtures run ``git diff``.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
+    env.update(
+        {
+            "GIT_TEMPLATE_DIR": "",
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@example.invalid",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@example.invalid",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "init.templateDir",
+            "GIT_CONFIG_VALUE_0": "",
+        }
+    )
+    return env
+
+
 def _git(root: Path, args: list[str]):
     """Run git against ``root``, contained two ways.
 
@@ -2636,6 +2690,7 @@ def _git(root: Path, args: list[str]):
     done = subprocess.run(
         ["git", "-C", str(root), *args],
         cwd=str(root),
+        env=_fixture_git_env(),
         capture_output=True,
         text=True,
         encoding="utf-8",

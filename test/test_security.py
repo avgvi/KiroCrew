@@ -5339,14 +5339,39 @@ class TestIsSensitiveBashCommand:
 
     def test_chained_cd_expansions_do_not_blow_up_the_gate(self) -> None:
         """A chain of `cd ${D:-x}` segments must not grow the tracked base set
-        without bound — each segment can multiply it, so the gate would hang.
-        The cap keeps the synchronous check fast."""
-        import time
+        without bound -- each segment can multiply it, so the gate would hang.
 
-        cmd = "D=bar; " + "; ".join(["cd ${D:-foo}"] * 20) + "; cat notes.txt"
-        start = time.monotonic()
-        is_sensitive_bash_command(cmd)
-        assert time.monotonic() - start < 30.0
+        This used to assert ``elapsed < 30s`` around the real gate. That couples
+        an algorithmic-boundedness property to filesystem I/O: every base the
+        chain produces is probed by ``is_sensitive_path`` /
+        ``_dir_holds_sensitive_leaf`` / ``_resolved_forms_bounded``, and at the
+        cap that is ~50 probes per segment, ~1000 for this chain. On a loaded
+        Windows runner those probes took 144s and pytest-timeout killed the xdist
+        worker (conventions doc, "5. Absolute time budgets"). With the probes
+        stubbed the same chain runs in ~50ms, so the time was never the
+        algorithm. Assert the property directly instead: the number of DISTINCT
+        bases the gate resolves per segment is capped, so probe counts grow
+        LINEARLY with the chain length rather than doubling per segment.
+        """
+        from kiro_crew import security
+
+        def chain(n: int) -> str:
+            return "D=bar; " + "; ".join(["cd ${D:-foo}"] * n) + "; cat notes.txt"
+
+        def probes(n: int) -> int:
+            with (
+                mock.patch.object(security, "_resolved_forms_bounded", return_value=set()),
+                mock.patch.object(security, "_dir_holds_sensitive_leaf", return_value=False),
+                mock.patch.object(security, "is_sensitive_path", return_value=False) as isp,
+            ):
+                assert is_sensitive_bash_command(chain(n)) is None
+                return isp.call_count
+
+        # Unbounded, each segment doubles the base set (2 readings x every
+        # existing base), so probes(20) / probes(10) would be ~2**10. Capped at
+        # _MAX_TRACKED_BASES it is at most ~2x: linear in the segment count.
+        ten, twenty = probes(10), probes(20)
+        assert twenty <= 2 * ten + 2 * security._MAX_TRACKED_BASES, (ten, twenty)
 
     def test_parameter_expansion_resolves_like_a_plain_reference(self) -> None:
         """`${V:-default}` and friends name a variable just as `${V}` does.

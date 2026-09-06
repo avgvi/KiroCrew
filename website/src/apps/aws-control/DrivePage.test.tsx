@@ -3996,7 +3996,10 @@ describe('DrivePage sections: keyboard paths and honest copy', () => {
     const dialog = await screen.findByTestId('share-dialog')
     // The panel is the dialog and holds focus; the scrim is presentational.
     expect(dialog.getAttribute('role')).toBe('dialog')
-    expect(dialog.contains(document.activeElement)).toBe(true)
+    // `useDialogFocusTrap` moves focus in a passive effect, one tick after the
+    // commit that `findByTestId` resolved on, so "holds focus" is a condition
+    // to wait for, not a property of the first frame the dialog is in the DOM.
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
 
     // Escape while the link is being created is refused.
     fireEvent.click(screen.getByTestId('share-create'))

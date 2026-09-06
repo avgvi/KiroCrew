@@ -99,6 +99,7 @@ import asyncio
 import asyncio.base_events
 import atexit
 import contextlib
+import functools
 import gc
 import getpass
 import importlib
@@ -988,6 +989,33 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int | None:
     return xdist_budget.resolve_workers()
 
 
+def _join_install_receipt_workers() -> None:
+    """Join any ``install_receipt.dispatch()`` worker before this test's pins lift.
+
+    ``dispatch()`` hands the receipt write to a daemon thread. The worker receives
+    every environment-derived input (the data home, the config fields) from the
+    dispatching thread and reads nothing itself -- but a thread still alive when
+    ``monkeypatch`` undoes ``KIROCREW_HOME`` is a thread whose WRITE lands after the
+    test that owned it is gone. The per-test probe in the 5x hygiene run saw exactly
+    that: the ``kirocrew-install-receipt`` thread alive after teardown in 3 of 5
+    runs, and once a receipt secret written into the operator's real ``~/.kiro/crew``.
+
+    Structural rather than opt-in, for the same reason as the CWD restore below: the
+    test that leaks is never the test that fails, so relying on each
+    dispatch-triggering test to remember ``wait_for_pending_receipt_writes()`` is the
+    shape that let this through. It lives in the ``tryfirst`` teardown hook for the
+    ordering reason documented on ``pytest_runtest_teardown``: an autouse fixture
+    from this conftest is an OUTER fixture and would tear down AFTER ``monkeypatch``
+    had already restored the environment. With no worker registered this is one
+    lock acquire; the module is looked up rather than imported so a test run that
+    never touches the receipt path pays nothing.
+    """
+    mod = sys.modules.get("kiro_crew.apps.install_receipt")
+    waiter = getattr(mod, "wait_for_pending_receipt_writes", None)
+    if waiter is not None:
+        waiter()
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_teardown(item, nextitem):
     """Put the process working directory back, BEFORE any fixture teardown runs.
@@ -1022,6 +1050,7 @@ def pytest_runtest_teardown(item, nextitem):
     directory for its own duration keeps working, and ``monkeypatch.chdir`` (which reverts
     itself, and whose undo lands on the same value) remains the right tool inside a test.
     """
+    _join_install_receipt_workers()
     if _SESSION_CWD is None:  # pragma: no cover - configure always runs first
         return
     try:
@@ -2347,6 +2376,54 @@ def _no_model_download(monkeypatch, _isolation_dirs):
     # lock file into the repo root, plus a background reader thread that outlives the
     # test. Tests that exercise telemetry delete this var themselves (test/metrics/).
     monkeypatch.setenv("KIROCREW_TELEMETRY", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_default_builtin_skills_sync(request, monkeypatch):
+    """Stop a bare ``SkillsLoader()`` / ``ContextBuilder()`` from syncing builtins.
+
+    ``SkillsLoader.__init__`` defaults ``install_builtins=True``, which calls
+    ``_ensure_builtin_skills`` — a stat walk plus capped content hashing over
+    the whole builtin-skills tree, then a real copy to disk on first divergence
+    (~20s on a loaded host). ``ContextBuilder.__init__`` builds exactly that
+    default (``self.skills = skills or SkillsLoader()``) whenever a test omits
+    ``skills=``, so every such call site pays the sync even though the test
+    under it almost never asserts anything about builtin skills. ~70 call
+    sites across ``test/`` construct ``ContextBuilder()`` bare; fixing it here
+    once is cheaper than a per-call-site ``skills=SkillsLoader(install_builtins=False)``
+    that every new call site would have to remember.
+
+    Patches the constructor itself, not a module-level flag, because that is
+    the seam production code actually reads — ``install_builtins`` is a plain
+    keyword default baked into ``SkillsLoader.__init__``'s signature, not a
+    config value the class re-reads later. The wrapper only rewrites an
+    OMITTED argument: a caller that explicitly passes ``install_builtins=`` in
+    either form (keyword or positional) is left alone, so ``test_skills.py``
+    passing ``install_builtins=False`` and ``test_crystallize_skill.py``
+    asserting on a real sync with ``install_builtins=True`` both keep getting
+    exactly what they asked for. A test whose contract IS the default — the
+    event-loop guard in ``test_builtin_skill_sync_safety.py`` asserts that a
+    bare ``SkillsLoader(skills_path=...)`` syncs when built off a running loop
+    — opts out with ``@pytest.mark.real_builtin_skills_sync`` (registered in
+    ``setup.cfg``) and gets the constructor untouched.
+    """
+    if request.node.get_closest_marker("real_builtin_skills_sync") is not None:
+        return
+
+    from kiro_crew.skills import SkillsLoader
+
+    original_init = SkillsLoader.__init__
+
+    @functools.wraps(original_init)
+    def _init_without_builtins_by_default(self, *args, **kwargs):
+        # 2nd positional slot (after self, i.e. args[0]) is skills_path; the
+        # 3rd (args[1]) is install_builtins. Only default it when the caller
+        # supplied neither the keyword nor that positional slot.
+        if "install_builtins" not in kwargs and len(args) < 2:
+            kwargs["install_builtins"] = False
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(SkillsLoader, "__init__", _init_without_builtins_by_default)
 
 
 @pytest.fixture(autouse=True)

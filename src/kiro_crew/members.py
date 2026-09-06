@@ -31,7 +31,7 @@ from pathlib import Path
 
 from kiro_crew import platform_compat
 from kiro_crew.artifacts import slugify
-from kiro_crew.atomic_write import atomic_write, fsync_dir
+from kiro_crew.atomic_write import atomic_write, fsync_dir, read_bytes_with_retry
 from kiro_crew.config.paths import data_home
 from kiro_crew.jsonl_util import (
     RECORD_CAP,
@@ -506,7 +506,11 @@ def read_dm_binding(slug: str) -> dict | None:
     binding is idempotently re-creatable, so degrading to re-creation is
     always safe and the caller needs no try/except.
 
-    Blocking file IO: call via ``asyncio.to_thread`` from async code.
+    Blocking file IO: call via ``asyncio.to_thread`` from async code. The read
+    goes through :func:`read_bytes_with_retry`, which retries a transient
+    Windows sharing violation (an AV/indexer handle on the file this
+    function's write-side twin, :func:`write_dm_binding`, just atomically
+    replaced) — off-loop only, matching this function's own calling contract.
     """
     try:
         path = dm_binding_path(slug)
@@ -517,7 +521,7 @@ def read_dm_binding(slug: str) -> dict | None:
         # restore paths rely on that to survive any on-disk state at boot.
         return None
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = read_bytes_with_retry(path).decode("utf-8")
     except (OSError, UnicodeError):
         # Invalid UTF-8 is the same totality case as an unreadable file: the
         # binding reads as absent, never as a 500 out of every member API.
@@ -655,7 +659,11 @@ def read_member_rules(slug: str, member: str) -> str:
     """
     path = member_rules_path(slug)
     try:
-        raw = path.read_text(encoding="utf-8")
+        # Same read-side twin as read_dm_binding: write_member_rules replaces
+        # this file atomically, and on Windows an AV/indexer handle on the
+        # just-replaced file is a transient sharing violation, not a corrupt
+        # rules file -- so it must not surface as MemberRulesUnreadable.
+        raw = read_bytes_with_retry(path).decode("utf-8")
     except FileNotFoundError:
         return ""
     except (OSError, UnicodeError) as exc:

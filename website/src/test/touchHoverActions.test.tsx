@@ -108,15 +108,21 @@ describe('DiffBlock header actions on touch devices', () => {
 
   // Pierre slots the header metadata after mount, so the actions row is absent
   // from the first commit -- await it instead of reading a null node.
+  //
+  // `PierrePatch` is a `React.lazy(() => import('./PierreImpl'))` boundary
+  // (src/pierre/index.tsx): the header only appears once that chunk resolves
+  // and commits. The default `findBy*` timeout (1000ms) races that dynamic
+  // import under a loaded, concurrent test run and loses intermittently
+  // -- widen it rather than assume the import always beats 1s.
   it('reveals and enlarges the diff actions where the pointer cannot hover', async () => {
     const { container } = render(<DiffBlock code={SIMPLE_DIFF} complete />)
-    await screen.findByTitle('Copy patch')
+    await screen.findByTitle('Copy patch', {}, { timeout: 5000 })
     expectRowTouchOverrides(row(container).className)
   })
 
   it('keeps the diff actions hover-revealed for hover-capable pointers', async () => {
     const { container } = render(<DiffBlock code={SIMPLE_DIFF} complete />)
-    await screen.findByTitle('Copy patch')
+    await screen.findByTitle('Copy patch', {}, { timeout: 5000 })
     const cls = row(container).className
     expect(cls).toContain('opacity-0')
     expect(cls).toContain('group-hover/diff:opacity-100')

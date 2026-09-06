@@ -65,6 +65,13 @@ def _deterministic_live_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(ct, "_cgroup_limit_mib", lambda: 0)
     monkeypatch.setattr(ct, "_host_available_mib", lambda: 0)
+    # The third reading that describes the CALLER rather than the host: Kiro
+    # Crew seeds ``PYTEST_XDIST_AUTO_NUM_WORKERS`` at every agent spawn
+    # boundary (``resource_status.inject_xdist_auto_cap``), so a run started
+    # from an agent shell inherits a cap of e.g. 7 and every "10-core host
+    # gets 10" assertion here reads 7 instead. Tests about that ceiling set it
+    # themselves; nothing else in this file is about who launched pytest.
+    monkeypatch.delenv(ct._XDIST_ENV_CAP, raising=False)
 
 
 @pytest.fixture
