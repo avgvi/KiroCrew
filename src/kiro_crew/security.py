@@ -6702,6 +6702,25 @@ def _iter_shell_chars(text: str, state: int = 0, ansi: bool = False) -> "Iterato
         i += 1
 
 
+#: Reserved words after which bash still reads the NEXT word in command
+#: position.  The ``case`` tracker in :func:`_matching_close_paren` needs this
+#: because ``case`` (and ``esac``) are reserved words ONLY in command position:
+#: ``if true; then case x in ...`` must open a case context even though the
+#: word before ``case`` is not a separator, while ``echo case`` must not.
+_KEEPS_COMMAND_POSITION = frozenset(
+    {"if", "then", "else", "elif", "fi", "while", "until", "do", "done", "!", "{", "time", "coproc"}
+)
+
+# ``case`` tracker states for _matching_close_paren, one frame per (possibly
+# nested) case statement.  A frame is ``[state, pattern_started, had_lparen,
+# pattern_depth]`` -- a mutable list, not a class, because the walk is on the
+# hot path of every substitution extraction.
+_CASE_AWAIT_SUBJECT = 0  # ``case`` seen, the subject word is next
+_CASE_AWAIT_IN = 1  # subject consumed, waiting for the literal ``in``
+_CASE_PATTERN = 2  # pattern position: ``)`` here terminates the pattern
+_CASE_BODY = 3  # clause body: ordinary commands until ;; / ;& / ;;& / esac
+
+
 def _matching_close_paren(text: str, open_end: int) -> "tuple[int, bool]":
     """``(index just past the matching ``)``, proven)`` for a paren opened before
     *open_end*, walked QUOTE-AWARELY through :func:`_iter_shell_chars`.
@@ -6714,21 +6733,140 @@ def _matching_close_paren(text: str, open_end: int) -> "tuple[int, bool]":
     payload came back as ``X='`` and the nested publish of a protected branch was
     never scanned at all -- ``is_denied`` allowed a command bash runs.
 
+    The walk also models bash's ``case`` pattern terminator (#8830).  Inside a
+    substitution bash accepts an UNBALANCED ``)`` after each case pattern --
+    ``$(case x in x) : ;; esac; pgrep -f <name>)`` runs the ``pgrep`` -- so a
+    paren-counting walk that treats that pattern ``)`` as the substitution
+    closer truncates the extracted body, and every consumer then scans LESS
+    than bash executes: ``_is_self_kill`` missed the pgrep clause and the
+    git-publish boundary walk missed a nested protected-branch push.  The
+    tracker below recognises a command-position ``case`` word, follows the
+    subject / ``in`` / pattern / body positions (``;;`` / ``;&`` / ``;;&``
+    reopen pattern position; ``esac`` closes the case; cases nest), and skips
+    depth accounting ONLY for parens in pattern position -- bash consumes those
+    as case syntax, never as closers.  On any input with no command-position
+    ``case`` word the tracker never activates and the walk is byte-identical
+    to the plain count.  Ambiguity fails toward the LONGER span: keeping more
+    text inside the body means consumers scan MORE, never less.
+
     ``proven`` is False when the parens never balance before the text ends. The
     caller must fail CLOSED on that: for an extractor the safe reading is the
     whole remainder (scan more, never less).
     """
     depth = 1
+    # One frame per open ``case``: [state, pattern_started, had_lparen,
+    # pattern_depth].  ``pattern_started`` distinguishes a first-word ``esac``
+    # (ends the case: ``case x in esac``) from ``esac`` as pattern content
+    # after ``(`` (``case x in (esac) ...``), and ``had_lparen`` records the
+    # optional leading ``(`` bash allows before a pattern.  ``pattern_depth``
+    # tracks extglob-style parens INSIDE a pattern so their closers are not
+    # read as the terminator.
+    frames: "list[list[int]]" = []
+    word: "list[str]" = []
+    at_cmd = True  # a substitution body begins in command position
+    prev_char = ""
+    prev_offset = -2
+
+    def _flush_word() -> None:
+        """Classify the pending word and advance the case tracker."""
+        nonlocal at_cmd
+        if not word:
+            return
+        w = "".join(word)
+        word.clear()
+        top = frames[-1] if frames else None
+        if top is not None and top[0] == _CASE_AWAIT_SUBJECT:
+            top[0] = _CASE_AWAIT_IN  # any word serves as the subject
+            at_cmd = False
+            return
+        if top is not None and top[0] == _CASE_AWAIT_IN:
+            # bash demands the literal ``in`` here; on anything else the
+            # statement is malformed and never runs.  Waiting for a later
+            # ``in`` rather than abandoning the frame is the longer-span
+            # (fail-toward-detection) reading.
+            if w == "in":
+                top[0] = _CASE_PATTERN
+                top[1] = top[2] = top[3] = 0
+            at_cmd = False
+            return
+        if top is not None and top[0] == _CASE_PATTERN:
+            if w == "esac" and not top[1] and not top[2]:
+                frames.pop()  # ``case x in esac`` / ``;; esac`` -- case over
+            else:
+                top[1] = 1  # pattern content began
+            at_cmd = False
+            return
+        # Command position proper (top level, or a clause body).
+        if at_cmd and w == "esac" and top is not None:
+            frames.pop()  # last clause may omit its ``;;``
+            at_cmd = False
+            return
+        if at_cmd and w == "case":
+            frames.append([_CASE_AWAIT_SUBJECT, 0, 0, 0])
+            at_cmd = False
+            return
+        at_cmd = w in _KEEPS_COMMAND_POSITION
+
     for step in _iter_shell_chars(text, 0, False):
         if step.offset < open_end:
             continue
-        if step.active:
-            if step.char == "(":
+        if not step.active:
+            # Quoted or escaped text is word CONTENT (raw spelling, so
+            # ``'case'`` / ``ca\se`` never equal the bare keyword) and never
+            # shell syntax.
+            word.append(step.text)
+            continue
+        ch = step.char
+        if ch in " \t":
+            _flush_word()
+        elif ch in ";&|\n`<>":
+            _flush_word()
+            top = frames[-1] if frames else None
+            if (
+                top is not None
+                and top[0] == _CASE_BODY
+                and prev_char == ";"
+                and prev_offset == step.offset - 1
+                and ch in ";&"
+            ):
+                # ``;;`` or ``;&`` -- the clause ends, the next pattern opens
+                # (a trailing ``&`` of ``;;&`` then lands harmlessly in
+                # pattern position).
+                top[0] = _CASE_PATTERN
+                top[1] = top[2] = top[3] = 0
+            if ch not in "<>":
+                at_cmd = True  # redirections do not change command position
+        elif ch == "(":
+            _flush_word()
+            top = frames[-1] if frames else None
+            if top is not None and top[0] == _CASE_PATTERN:
+                if not top[1] and not top[2] and top[3] == 0:
+                    top[2] = 1  # bash's optional ``(`` before the pattern
+                else:
+                    top[3] += 1  # extglob-style paren inside the pattern
+            else:
                 depth += 1
-            elif step.char == ")":
+                at_cmd = True
+        elif ch == ")":
+            _flush_word()
+            top = frames[-1] if frames else None
+            if top is not None and top[0] == _CASE_PATTERN:
+                if top[3] > 0:
+                    top[3] -= 1  # closes an intra-pattern paren
+                else:
+                    top[0] = _CASE_BODY  # pattern terminator, NOT a closer
+                    at_cmd = True
+            else:
                 depth -= 1
                 if depth == 0:
                     return (step.offset + len(step.text), True)
+        else:
+            word.append(step.text)
+            prev_char = ch
+            prev_offset = step.offset
+            continue
+        prev_char = ch
+        prev_offset = step.offset
     return (len(text), False)
 
 

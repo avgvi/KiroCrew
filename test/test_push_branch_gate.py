@@ -2015,3 +2015,93 @@ class TestNestedPayloadExtractionSpansTheProvenBoundary:
         )
         assert security._GIT_PUBLISH_UNGATED in floor("git push origin feature > >(echo main")
         assert security._git_push_args("bash -c '(cd /tmp && git push origin my-feature)'") is None
+
+
+class TestCasePatternParenIsNotACloser:
+    """#8830: bash accepts an UNBALANCED ``)`` after each ``case`` pattern inside a
+    substitution, so a paren-counting walk that honoured it as the closer truncated
+    every consumer's extracted body. All vectors here are bash-verified: each
+    substitution RUNS the clause the old span dropped."""
+
+    def test_the_span_runs_past_a_case_pattern_paren(self):
+        from kiro_crew.security import _matching_close_paren
+
+        # The issue's own shape: the pattern ``)`` after ``x`` is case syntax;
+        # the substitution closes at the final ``)``.
+        text = "$(case x in x) : ;; esac; pgrep -f kirocrew)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+        # bash's optional leading ``(`` before the pattern.
+        text = "$(case x in (x) echo lead ;; esac; echo tail)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+        # Cases nest: the inner case's parens are all case syntax too.
+        text = "$(case a in a) case b in b) : ;; esac ;; esac)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+        # ``;&`` fall-through and ``|`` alternation reopen/extend pattern position.
+        text = "$(case x in x) echo one ;& y|z) echo two ;; esac)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+        # A QUOTED ``)`` in a clause body is data (the earlier fix), and the
+        # pattern paren is case syntax (this fix) -- together in one vector.
+        text = "$(case x in x) echo ')' ;; esac)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+        # ``esac`` directly after ``in`` ends the case; the next ``)`` closes.
+        text = "$(case z in esac; echo after)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+        # A substitution as the case SUBJECT keeps its own parens balanced.
+        text = "$(case $(echo x) in x) echo subj ;; esac)"
+        assert _matching_close_paren(text, 2) == (len(text), True)
+
+    def test_the_extracted_body_spans_the_whole_case_statement(self):
+        from kiro_crew.security import _substitution_bodies
+
+        # The two vectors measured in the issue, previously cut to 'case x in x'.
+        assert _substitution_bodies("kill $(case x in x) : ;; esac; pgrep -f kirocrew)") == [
+            "case x in x) : ;; esac; pgrep -f kirocrew"
+        ]
+        assert _substitution_bodies("echo $(case x in x) git push origin main; esac)") == [
+            "case x in x) git push origin main; esac"
+        ]
+
+    def test_the_self_kill_consumer_convicts_through_a_case_pattern(self):
+        # bash-verified: this command RESOLVES the pgrep and kills the product,
+        # and the truncated span made _is_self_kill return False on it.
+        assert security._is_self_kill("kill $(case x in x) : ;; esac; pgrep -f kirocrew)")
+
+    def test_the_git_publish_consumer_sees_the_nested_push(self):
+        # The full body reaching the boundary walk is what this fix restores;
+        # the deny itself is pinned so the gate cannot reopen if the redundant
+        # raw-text layers that also catch these shapes are later narrowed.
+        for cmd in (
+            "echo $(case x in x) git push origin main; esac)",
+            "true > >(case x in x) git push origin main ;; esac)",
+        ):
+            assert security.is_denied(cmd) is not None, (
+                f"{cmd!r}: the case-pattern paren truncated the extracted body "
+                f"and the nested protected push was never scanned"
+            )
+
+    def test_case_free_inputs_are_byte_identical(self):
+        from kiro_crew.security import _matching_close_paren, _substitution_bodies
+
+        # Parity pins for the tracker's OFF path: no command-position ``case``
+        # word, so every span must equal the plain count's answer.
+        assert _matching_close_paren(">(a)", 2) == (4, True)
+        assert _matching_close_paren(">(a(b))", 2) == (7, True)
+        assert _matching_close_paren(">(X=')' a)", 2) == (10, True)
+        assert _matching_close_paren(">(a", 2) == (3, False)
+        assert _substitution_bodies("echo $(pgrep -f foo) tail") == ["pgrep -f foo"]
+        assert _substitution_bodies("$(X=')' echo hi)") == ["X=')' echo hi"]
+        # ``case`` as DATA (not in command position) must not open a context:
+        # the first unquoted ``)`` still closes, exactly as before.
+        assert _substitution_bodies("echo $(echo case x in y) tail") == ["echo case x in y"]
+        # A QUOTED ``case`` in command position is data too.
+        assert _substitution_bodies("echo $('case' x in y) tail") == ["'case' x in y"]
+
+    def test_ambiguity_fails_toward_the_longer_span(self):
+        from kiro_crew.security import _matching_close_paren
+
+        # A malformed case (no ``in`` yet) holds the walk in its waiting state,
+        # where parens still count normally -- but an unterminated case whose
+        # pattern position never resolves runs to the end UNPROVEN, the
+        # fail-closed direction (consumers scan the whole remainder).
+        text = "$(case x in y) echo never-closed"
+        assert _matching_close_paren(text, 2) == (len(text), False)
