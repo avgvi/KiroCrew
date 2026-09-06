@@ -220,7 +220,7 @@ points is overhead, not richness.
   every level keeps it. Length is the other axis and it stays with the active
   level: `answer_only` holds its few-plain-sentences bound unless the user asked
   for depth (a doc, a walkthrough, in detail), and it pins its own replies to the
-  Age 10 row above, borrowing the calibration rather than a length licence.
+  Age 5 row above, borrowing the calibration rather than a length licence.
   `ultra` and `concise`: keep the register the audience row calls for and spend
   the words there; the level bounds length, not vocabulary.
 - **Persist what gets forwarded.** An explanation written for a manager, a

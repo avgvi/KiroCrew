@@ -12356,7 +12356,7 @@
       },
       "chatPanel": {
         "about_you": "আপনার সম্পর্কে",
-        "answer_only_details_on_request": "শুধু উত্তর — বিস্তারিত চাইলে বা জরুরি হলে",
+        "answer_only_details_on_request": "শুধু উত্তর — সবচেয়ে সহজ কথায়, বিস্তারিত চাইলে",
         "auto_add_documents": "স্বয়ংক্রিয়ভাবে নথি যোগ করুন",
         "auto_add_saved_artifacts": "সংরক্ষিত আর্টিফ্যাক্ট স্বয়ংক্রিয়ভাবে যোগ করুন",
         "auto_compact_threshold": "অটো-কম্প্যাক্ট থ্রেশহোল্ড",

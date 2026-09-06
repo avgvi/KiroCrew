@@ -12183,7 +12183,7 @@
       },
       "chatPanel": {
         "about_you": "关于你",
-        "answer_only_details_on_request": "仅结论 — 细节按需提供，关键情况自动给出",
+        "answer_only_details_on_request": "仅结论 — 最简单的话说清，细节按需提供",
         "auto_add_documents": "自动添加文档",
         "auto_add_saved_artifacts": "自动添加已保存的产物",
         "auto_compact_threshold": "自动压缩阈值",

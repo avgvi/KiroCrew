@@ -12183,7 +12183,7 @@
       },
       "chatPanel": {
         "about_you": "사용자 정보",
-        "answer_only_details_on_request": "답변만 — 자세한 내용은 요청 시 또는 중요할 때",
+        "answer_only_details_on_request": "답변만 — 가장 쉬운 말로, 자세한 내용은 요청 시",
         "auto_add_documents": "문서 자동 추가",
         "auto_add_saved_artifacts": "저장된 아티팩트 자동 추가",
         "auto_compact_threshold": "자동 압축 임계값",

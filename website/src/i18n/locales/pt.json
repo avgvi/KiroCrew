@@ -12527,7 +12527,7 @@
       },
       "chatPanel": {
         "about_you": "Sobre você",
-        "answer_only_details_on_request": "Somente a resposta — detalhes a pedido ou se crítico",
+        "answer_only_details_on_request": "Somente a resposta — palavras simples, detalhes a pedido",
         "auto_add_documents": "Adicionar documentos automaticamente",
         "auto_add_saved_artifacts": "Adicionar artefatos salvos automaticamente",
         "auto_compact_threshold": "Limite de compactação automática",

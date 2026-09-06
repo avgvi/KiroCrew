@@ -12700,7 +12700,7 @@
       },
       "chatPanel": {
         "about_you": "О вас",
-        "answer_only_details_on_request": "Только ответ — подробности по запросу или в критичных случаях",
+        "answer_only_details_on_request": "Только ответ — самыми простыми словами, подробности по запросу",
         "auto_add_documents": "Автоматически добавлять документы",
         "auto_add_saved_artifacts": "Автоматически добавлять сохранённые артефакты",
         "auto_compact_threshold": "Порог автосжатия",

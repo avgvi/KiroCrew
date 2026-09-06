@@ -3,7 +3,8 @@
 `prepare-pr` writes the PR description, and its "What changed" section is what a
 reviewer reads first. Left unconstrained it grows into layered clauses and
 decorative jargon that hide the actual change. The skill now pins that prose to
-the Age 10 row of the `explain-for` skill.
+the Age 5 row of the `explain-for` skill (Age 10 was tried first and still let
+dense prose through).
 
 Two joints can break silently. The register rule can be dropped from
 `prepare-pr` (bodies drift back to dense prose with no test failing), or the
@@ -29,16 +30,21 @@ def _flat(path: Path) -> str:
     return " ".join(path.read_text(encoding="utf-8").split())
 
 
-def test_prepare_pr_pins_the_pr_body_to_the_age_10_register() -> None:
+def test_prepare_pr_pins_the_pr_body_to_the_age_5_register() -> None:
     flat = _flat(PREPARE_PR)
     # The rule itself, and the skill it borrows the calibration from.
-    assert "Age 10 row of the `explain-for`" in flat
-    # Register, not depth: a plain-language rule that also cut facts would be worse.
-    assert "This sets the *register*, never the depth" in flat
+    assert "Age 5 row of the `explain-for`" in flat
+    # The old pin must be gone everywhere, not just in the heading.
+    assert "Age 10" not in flat
+    assert "ten-year-old" not in flat
+    # Register, not depth or reader: a plain-language rule that also cut facts
+    # or talked down to the reviewer would be worse.
+    assert "Age 5 is the *register*, never the depth or the reader" in flat
+    assert "the facts stay complete and technically exact" in flat
     # The concrete bound on the section the user could not read.
     assert "Three short paragraphs at most" in flat
 
 
-def test_explain_for_still_carries_the_age_10_row() -> None:
+def test_explain_for_still_carries_the_age_5_row() -> None:
     """The row `prepare-pr` points at must exist, or the reference is dead."""
-    assert "| Age 10 |" in _flat(EXPLAIN_FOR)
+    assert "| Age 5 |" in _flat(EXPLAIN_FOR)

@@ -12356,7 +12356,7 @@
       },
       "chatPanel": {
         "about_you": "आपके बारे में",
-        "answer_only_details_on_request": "केवल उत्तर — विवरण मांगने पर या ज़रूरी होने पर",
+        "answer_only_details_on_request": "केवल उत्तर — सबसे सरल शब्दों में, विवरण मांगने पर",
         "auto_add_documents": "दस्तावेज़ स्वतः जोड़ें",
         "auto_add_saved_artifacts": "सहेजे गए आर्टिफ़ैक्ट स्वतः जोड़ें",
         "auto_compact_threshold": "ऑटो-कॉम्पैक्ट थ्रेशोल्ड",

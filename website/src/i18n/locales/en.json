@@ -7855,7 +7855,7 @@
       },
       "chatPanel": {
         "about_you": "About You",
-        "answer_only_details_on_request": "Answer only — details on request or when critical",
+        "answer_only_details_on_request": "Answer only — plainest words, details on request",
         "auto_add_documents": "Auto-Add Documents",
         "auto_add_saved_artifacts": "Auto-Add Saved Artifacts",
         "auto_compact_threshold": "Auto-Compact Threshold",

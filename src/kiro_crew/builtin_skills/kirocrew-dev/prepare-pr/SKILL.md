@@ -642,12 +642,14 @@ absent. Phase 1.5 checks them against the diff.
 
 Omit a section only when truly not applicable, and say so.
 
-### Writing register — Age 10
+### Writing register — Age 5
 
-Every prose section above is written at the **Age 10 row of the `explain-for`
-skill**: everyday words, plain cause and effect, one idea per sentence. A reviewer
-must get the point in one pass without decoding it. This sets the *register*, never
-the depth — the facts stay complete and technically exact.
+Every prose section above is written at the **Age 5 row of the `explain-for`
+skill**: the smallest words that are still true, one idea per sentence, one picture
+from daily life when a picture is faster than a paragraph. A reviewer must get the
+point in one pass without decoding it. Age 5 is the *register*, never the depth or
+the reader — the reader is an expert in a hurry, and the facts stay complete and
+technically exact.
 
 - **One idea per sentence, point first.** Do not chain clauses with `so that`,
   `which means`, `thereby` or `hence`. Short sentences, in order.
@@ -661,15 +663,15 @@ the depth — the facts stay complete and technically exact.
   thread, not the body.
 - **Say the effect in user words.** What a person sees now that they did not see
   before, or stops seeing. Not "improves robustness".
-- **Show it, when words alone are slow.** A ten-year-old gets a moved flow from
-  one picture before they finish the first paragraph about it. When the change
+- **Show it, when words alone are slow.** A five-year-old gets a moved flow from
+  one picture before they finish the first sentence about it. When the change
   moves steps, states, or who calls whom, add one Mermaid diagram. See *Draw it*
   below.
 
 Rewrite check before opening the PR: read section 3 once, out loud. If any
 sentence needs a second read to find its point, rewrite that sentence.
 
-#### Draw it — the Age 10 diagram
+#### Draw it — the Age 5 diagram
 
 The doctrine lives in the `explain-for` skill: *Draw it when the thing has a
 shape* says when a Mermaid fence beats prose, and *Colour it, and make every
@@ -702,7 +704,7 @@ one-line fix, a rename, a test-only change, or a doc edit. **One diagram, at mos
   Colour the edges too: `linkStyle <n> stroke:#16A34A,stroke-width:2px` on the
   new path, `stroke:#DC2626,stroke-dasharray:4 3` on the removed one. Put one
   legend line under the fence: `🟩 added · 🟨 changed · 🟥 removed · 🟦 unchanged`.
-- **Caption in the Age 10 register**, one sentence: who now calls whom, and what
+- **Caption in the Age 5 register**, one sentence: who now calls whom, and what
   the reader sees because of it.
 - **Place it inside section 3**, right after the paragraph it illustrates.
 
