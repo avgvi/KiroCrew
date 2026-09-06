@@ -32,7 +32,13 @@ def _make_config(agents: dict[str, KiroCrewAgentConfig]) -> KiroCrewConfig:
 
 
 async def _run_sync(cfg: KiroCrewConfig, aim_agents_list: list[AgentInfo]) -> dict:
-    """Invoke the production _do_agents_sync with mocked dependencies and return parsed body."""
+    """Invoke the production _do_agents_sync with mocked dependencies and return parsed body.
+
+    The sync persists via a delta mutate through ``update_config_locked``
+    (#4767); the patch below records each call on ``cfg.save`` (so the
+    existing called/not-called assertions keep their meaning) and stores the
+    mutated document on ``cfg.written_doc``.
+    """
     from kiro_crew.dashboard.handlers.agents import _do_agents_sync
 
     request = MagicMock()
@@ -40,9 +46,20 @@ async def _run_sync(cfg: KiroCrewConfig, aim_agents_list: list[AgentInfo]) -> di
 
     sel_mock = MagicMock()
 
+    def _fake_update_config_locked(*args, **kwargs):
+        doc: dict = {"agents": {}}
+        result = kwargs["mutate"](doc)
+        cfg.save()
+        cfg.written_doc = result
+        return result
+
     with (
         patch("kiro_crew.dashboard.handlers.agents.KiroCrewConfig.load", return_value=cfg),
         patch("kiro_crew.dashboard.handlers.agents.list_agents", return_value=aim_agents_list),
+        patch(
+            "kiro_crew.dashboard.handlers.agents.update_config_locked",
+            new=_fake_update_config_locked,
+        ),
         patch("kiro_crew.dashboard.handlers.agents._sel", return_value=sel_mock),
     ):
         response = await _do_agents_sync(request)
