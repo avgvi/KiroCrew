@@ -11368,7 +11368,10 @@
         "session_other": "{{count}} sessões",
         "summarize_now": "Resumir agora",
         "tool": "ferramenta",
-        "when": "Quando"
+        "when": "Quando",
+        "repo_scope_label": "Escopo do repositório",
+        "repo_scope_placeholder": "Escopo do repo (opcional, ex. src/kiro_crew)",
+        "lesson_not_deleted": "Não foi possível excluir a lição. Nada foi removido."
       },
       "portabilityTab": {
         "archive_contents": "Conteúdo do arquivo:",

@@ -11044,7 +11044,10 @@
         "session_other": "{{count}}개 세션",
         "summarize_now": "지금 요약",
         "tool": "도구",
-        "when": "시점"
+        "when": "시점",
+        "repo_scope_label": "저장소 범위",
+        "repo_scope_placeholder": "저장소 범위 (선택, 예: src/kiro_crew)",
+        "lesson_not_deleted": "교훈을 삭제할 수 없습니다. 아무것도 제거되지 않았습니다."
       },
       "portabilityTab": {
         "archive_contents": "아카이브 내용:",

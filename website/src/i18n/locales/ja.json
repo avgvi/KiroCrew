@@ -11044,7 +11044,10 @@
         "session_other": "{{count}} セッション",
         "summarize_now": "今すぐ要約",
         "tool": "ツール",
-        "when": "時間"
+        "when": "時間",
+        "repo_scope_label": "リポジトリのスコープ",
+        "repo_scope_placeholder": "リポジトリのスコープ（任意、例: src/kiro_crew）",
+        "lesson_not_deleted": "レッスンを削除できませんでした。何も削除されていません。"
       },
       "portabilityTab": {
         "archive_contents": "アーカイブの内容:",

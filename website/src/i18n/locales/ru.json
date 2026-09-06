@@ -11530,7 +11530,10 @@
         "session_other": "{{count}} сессии",
         "summarize_now": "Создать сводку",
         "tool": "инструмент",
-        "when": "Когда"
+        "when": "Когда",
+        "repo_scope_label": "Область репозитория",
+        "repo_scope_placeholder": "Область репозитория (необязательно, напр. src/kiro_crew)",
+        "lesson_not_deleted": "Не удалось удалить урок. Ничего не было удалено."
       },
       "portabilityTab": {
         "archive_contents": "Содержимое архива:",

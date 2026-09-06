@@ -11206,7 +11206,10 @@
         "session_other": "{{count}} Sitzungen",
         "summarize_now": "Jetzt zusammenfassen",
         "tool": "Werkzeug",
-        "when": "Wann"
+        "when": "Wann",
+        "repo_scope_label": "Repository-Bereich",
+        "repo_scope_placeholder": "Repo-Bereich (optional, z. B. src/kiro_crew)",
+        "lesson_not_deleted": "Die Lektion konnte nicht gelöscht werden. Es wurde nichts entfernt."
       },
       "portabilityTab": {
         "archive_contents": "Archivinhalt:",

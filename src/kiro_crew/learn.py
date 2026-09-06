@@ -297,17 +297,44 @@ class LessonStore:
         logger.info("%s lesson: %s", outcome.capitalize(), lesson.rule)
         return outcome
 
-    def remove(self, rule_substring: str) -> bool:
-        """Remove lessons whose rule contains *rule_substring*. Returns True if any removed.
+    def remove(
+        self,
+        rule_substring: str,
+        repo_scope: str | None = None,
+        *,
+        exact: bool = False,
+    ) -> bool:
+        """Remove lessons matching *rule_substring*. Returns True if any removed.
+
+        Two modes, mirroring the vector store's ``delete_lesson``. A scoped
+        lesson and its global twin share rule text but are DISTINCT rows under
+        the store's ``(rule, repo_scope)`` identity, so:
+
+        - ``exact=True`` (the dashboard/user delete path): match the rule text
+          EXACTLY and require the row's ``repo_scope`` to equal *repo_scope*
+          (both normalized through ``canonical_scope``). This deletes only the
+          copy the user asked for -- a substring match on rule text alone
+          removes a global and a scoped copy of the same rule together, with no
+          recovery.
+        - ``exact=False`` (legacy substring behaviour): unchanged, so callers
+          deleting by a rule fragment keep working. ``repo_scope`` is ignored.
 
         Holds the lock. It previously did an unlocked read-modify-write, so a
         concurrent ``save`` could be lost outright -- and without that lock the
         atomicity :meth:`save_or_enrich` claims would not actually hold.
         """
+        want_scope = canonical_scope(repo_scope) if exact else None
         with self._lock:
             lessons = self.load_all()
-            lower = rule_substring.lower()
-            kept = [le for le in lessons if lower not in le.rule.lower()]
+            if exact:
+                kept = [
+                    le
+                    for le in lessons
+                    if not (le.rule == rule_substring and le.repo_scope == want_scope)
+                ]
+            else:
+                lower = rule_substring.lower()
+                kept = [le for le in lessons if lower not in le.rule.lower()]
             if len(kept) == len(lessons):
                 return False
             self._write_all(kept)

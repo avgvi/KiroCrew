@@ -220,3 +220,57 @@ async def test_lessons_delete_keeps_the_object_path() -> None:
 
     assert response.status == 400
     assert body == {"error": "rule substring required"}
+
+
+@pytest.mark.parametrize("bad_scope", [123, ["x"], {"k": "v"}, True, "", "   "])
+async def test_lessons_delete_rejects_a_non_string_or_blank_repo_scope(bad_scope) -> None:
+    """A present-but-malformed repo_scope must 400, never coerce to null.
+
+    Coercing a non-string or blank scope to None would retarget the exact-match
+    delete at the GLOBAL copy of the rule and hard-delete it -- the data-loss
+    the exact path exists to prevent. The store must not be touched.
+    """
+    app = _lessons_app()
+
+    with (
+        patch("kiro_crew.dashboard.handlers.cron._recognize_session", AsyncMock(return_value=None)),
+        patch("kiro_crew.dashboard.handlers.cron._blocks_reads_session", return_value=False),
+        patch("kiro_crew.dashboard.handlers.cron._sel"),
+    ):
+        async with TestClient(TestServer(app)) as client:
+            response = await client.delete(
+                "/api/lessons",
+                json={"rule": "some rule", "repo_scope": bad_scope},
+                headers={"X-Session-Key": "dashboard:ui"},
+            )
+            body = await response.json()
+
+    assert response.status == 400
+    assert body == {"error": "repo_scope must be null or a non-empty string"}
+    app["state"].lessons.remove.assert_not_called()
+
+
+async def test_lessons_delete_accepts_a_null_repo_scope_as_the_global_copy() -> None:
+    """repo_scope=null is the VALID way to delete the global copy: it opts into
+    exact-match mode (has_repo_scope True) and passes None through, so the store
+    is asked to remove the unscoped row exactly."""
+    app = _lessons_app()
+
+    with (
+        patch("kiro_crew.dashboard.handlers.cron._recognize_session", AsyncMock(return_value=None)),
+        patch("kiro_crew.dashboard.handlers.cron._blocks_reads_session", return_value=False),
+        patch(
+            "kiro_crew.dashboard.handlers.cron._get_memory",
+            return_value=SimpleNamespace(vector_store=None),
+        ),
+        patch("kiro_crew.dashboard.handlers.cron._sel"),
+    ):
+        async with TestClient(TestServer(app)) as client:
+            response = await client.delete(
+                "/api/lessons",
+                json={"rule": "some rule", "repo_scope": None},
+                headers={"X-Session-Key": "dashboard:ui"},
+            )
+
+    assert response.status == 200
+    app["state"].lessons.remove.assert_called_once_with("some rule", None, exact=True)

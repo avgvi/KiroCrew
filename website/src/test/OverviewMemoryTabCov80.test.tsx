@@ -183,9 +183,69 @@ describe('MemoryTab — lessons', () => {
     fireEvent.change(input, { target: { value: 'zzq-new-rule' } })
     await userEvent.click(screen.getByRole('button', { name: /^Add$/ }))
 
-    await waitFor(() => expect(api.createLesson).toHaveBeenCalledWith('zzq-new-rule', 'knowledge'))
+    await waitFor(() => expect(api.createLesson).toHaveBeenCalledWith('zzq-new-rule', 'knowledge', undefined))
     await waitFor(() => expect(api.lessons.mock.calls.length).toBeGreaterThan(reads))
     expect(input.value).toBe('')
+  })
+
+  it('forwards a filled repo scope and clears it after a successful add', async () => {
+    render(<MemoryTab refreshTrigger={0} />)
+    await screen.findByText('zzq-rule-beta')
+    const input = screen.getByPlaceholderText(/Rule/) as HTMLInputElement
+    const scopeInput = screen.getByPlaceholderText(/Repo scope/) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'zzq-scoped-rule' } })
+    fireEvent.change(scopeInput, { target: { value: '  src/kiro_crew  ' } })
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/ }))
+
+    // The scope is trimmed before it is sent, and a blank box would send
+    // undefined (no repo_scope) — the pre-affordance default.
+    await waitFor(() => expect(api.createLesson).toHaveBeenCalledWith('zzq-scoped-rule', 'knowledge', 'src/kiro_crew'))
+    await waitFor(() => expect(scopeInput.value).toBe(''))
+    expect(input.value).toBe('')
+  })
+
+  it('surfaces a rejected scope through ErrorNotice and keeps the drafts', async () => {
+    // An invalid scope makes /api/lessons return 400, so j() throws and
+    // createLesson rejects. The catch must show the error and leave the rule
+    // and scope in their boxes so the user can fix the scope and retry.
+    api.createLesson.mockRejectedValue(new Error('scope must be a path fragment'))
+    render(<MemoryTab refreshTrigger={0} />)
+    await screen.findByText('zzq-rule-beta')
+    const reads = api.lessons.mock.calls.length
+    const input = screen.getByPlaceholderText(/Rule/) as HTMLInputElement
+    const scopeInput = screen.getByPlaceholderText(/Repo scope/) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'zzq-bad-scope-rule' } })
+    fireEvent.change(scopeInput, { target: { value: '.' } })
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/scope must be a path fragment/i)
+    // Nothing was saved, so the list is not re-read and the drafts survive.
+    expect(api.lessons).toHaveBeenCalledTimes(reads)
+    expect(input.value).toBe('zzq-bad-scope-rule')
+    expect(scopeInput.value).toBe('.')
+  })
+
+  it('disables the row while a save is in flight so an edit cannot be erased', async () => {
+    // Hold createLesson open to observe the in-flight window. While it is
+    // pending, the rule/scope inputs and Add button are disabled, so a value
+    // cannot be typed mid-flight and then erased by the completion's reset.
+    let resolve!: (v: { ok: boolean; outcome: string; reason: string }) => void
+    api.createLesson.mockReturnValue(new Promise((r) => { resolve = r }))
+    render(<MemoryTab refreshTrigger={0} />)
+    await screen.findByText('zzq-rule-beta')
+    const input = screen.getByPlaceholderText(/Rule/) as HTMLInputElement
+    const scopeInput = screen.getByPlaceholderText(/Repo scope/) as HTMLInputElement
+    const addBtn = screen.getByRole('button', { name: /^Add$/ })
+    fireEvent.change(input, { target: { value: 'zzq-inflight-rule' } })
+    await userEvent.click(addBtn)
+
+    await waitFor(() => expect(input).toBeDisabled())
+    expect(scopeInput).toBeDisabled()
+    expect(addBtn).toBeDisabled()
+
+    resolve({ ok: true, outcome: 'inserted', reason: '' })
+    await waitFor(() => expect(input).not.toBeDisabled())
+    expect(scopeInput).not.toBeDisabled()
   })
 
   it('keeps a refused lesson editable and reports the backend reason', async () => {
@@ -231,11 +291,16 @@ describe('MemoryTab — lessons', () => {
     render(<MemoryTab refreshTrigger={0} />)
     await screen.findByText('zzq-rule-beta')
     const input = screen.getByPlaceholderText(/Rule/) as HTMLInputElement
+    const scopeInput = screen.getByPlaceholderText(/Repo scope/) as HTMLInputElement
     fireEvent.change(input, { target: { value: 'zzq-existing-rule' } })
+    fireEvent.change(scopeInput, { target: { value: 'src/kiro_crew' } })
     await userEvent.click(screen.getByRole('button', { name: /^Add$/ }))
 
     expect(await screen.findByRole('status')).toHaveTextContent(/already stored/i)
+    // Both drafts clear on a completed no-op submission, so the retained scope
+    // cannot leak into the next, unrelated lesson.
     expect(input.value).toBe('')
+    expect(scopeInput.value).toBe('')
   })
 
   it('refuses to add an empty rule', async () => {
@@ -254,8 +319,58 @@ describe('MemoryTab — lessons', () => {
       .find((b) => /delete/i.test(b.textContent ?? '')) as HTMLButtonElement
     await userEvent.click(del)
 
-    await waitFor(() => expect(api.deleteLesson).toHaveBeenCalledWith('zzq-rule-beta'))
+    await waitFor(() => expect(api.deleteLesson).toHaveBeenCalledWith('zzq-rule-beta', null))
     await waitFor(() => expect(api.lessons.mock.calls.length).toBeGreaterThan(reads))
+  })
+
+  it('deletes the scoped twin by its scope, sparing the global copy', async () => {
+    // A global and a scoped copy of ONE rule: same rule text, distinct scope.
+    // The scoped row shows its scope as a chip, which is how a user tells the
+    // two apart; deleting it must send that scope so the backend removes only
+    // it, not the global twin.
+    api.lessons.mockResolvedValue({ lessons: [
+      { rule: 'zzq-rule-twin', category: 'knowledge', ts: '2026-01-03T00:00:00Z', repo_scope: null },
+      { rule: 'zzq-rule-twin', category: 'knowledge', ts: '2026-01-04T00:00:00Z', repo_scope: 'src/kiro_crew' },
+    ] })
+    render(<MemoryTab refreshTrigger={0} />)
+    const scopeChip = await screen.findByText('src/kiro_crew')
+    const scopedRow = scopeChip.closest('tr') as HTMLElement
+    const del = Array.from(scopedRow.querySelectorAll('button'))
+      .find((b) => /delete/i.test(b.textContent ?? '')) as HTMLButtonElement
+    await userEvent.click(del)
+
+    // The scope rides along so the backend deletes by exact (rule, scope)
+    // identity, not a scope-blind substring that would take the global twin too.
+    await waitFor(() => expect(api.deleteLesson).toHaveBeenCalledWith('zzq-rule-twin', 'src/kiro_crew'))
+  })
+
+  it('surfaces a failed delete through ErrorNotice and does not re-read the list', async () => {
+    api.deleteLesson.mockRejectedValue(new Error('storage refused the delete'))
+    render(<MemoryTab refreshTrigger={0} />)
+    await screen.findByText('zzq-rule-beta')
+    const reads = api.lessons.mock.calls.length
+    const row = screen.getByText('zzq-rule-beta').closest('tr') as HTMLElement
+    const del = Array.from(row.querySelectorAll('button'))
+      .find((b) => /delete/i.test(b.textContent ?? '')) as HTMLButtonElement
+    await userEvent.click(del)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/storage refused the delete/i)
+    // A failed delete removed nothing, so the list is not re-read.
+    expect(api.lessons).toHaveBeenCalledTimes(reads)
+  })
+
+  it('surfaces an ok:false delete without claiming the row was removed', async () => {
+    api.deleteLesson.mockResolvedValue({ ok: false })
+    render(<MemoryTab refreshTrigger={0} />)
+    await screen.findByText('zzq-rule-beta')
+    const reads = api.lessons.mock.calls.length
+    const row = screen.getByText('zzq-rule-beta').closest('tr') as HTMLElement
+    const del = Array.from(row.querySelectorAll('button'))
+      .find((b) => /delete/i.test(b.textContent ?? '')) as HTMLButtonElement
+    await userEvent.click(del)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not delete/i)
+    expect(api.lessons).toHaveBeenCalledTimes(reads)
   })
 
   it('shows an empty state rather than a bare table', async () => {

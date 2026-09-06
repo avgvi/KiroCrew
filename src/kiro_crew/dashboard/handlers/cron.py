@@ -2165,11 +2165,40 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     if not rule_sub:
         return web.json_response({"error": "rule substring required"}, status=400)
     scope = body.get("scope", "global")
+    # repo_scope identifies WHICH copy of a rule to delete. A global lesson and a
+    # copy scoped to one repository share rule text but are distinct records, so a
+    # scope-blind substring delete removes both with no recovery. When the client
+    # sends repo_scope (the Memory tab always does now, as null for a global row),
+    # delete by EXACT (rule, repo_scope) identity so only the intended copy goes.
+    # ``repo_scope`` absent entirely (a legacy client) keeps the old substring
+    # behaviour, so nothing that worked before breaks.
+    has_repo_scope = "repo_scope" in body
+    raw_repo_scope = body.get("repo_scope")
+    # When the client opts into scoped deletion by sending the key, repo_scope
+    # must be null (delete the GLOBAL copy) or a non-empty string (delete that
+    # scoped copy). A NON-STRING or a blank/whitespace string must NOT be
+    # coerced to null: coercion would silently retarget the delete at the
+    # global row and hard-delete it, the exact data-loss this exact-match path
+    # exists to prevent. Reject it at the boundary with 400 instead -- the same
+    # contract the create route enforces on repo_scope via LEARN_ADD_SCHEMA.
+    if has_repo_scope and raw_repo_scope is not None:
+        if not isinstance(raw_repo_scope, str) or not raw_repo_scope.strip():
+            return web.json_response(
+                {"error": "repo_scope must be null or a non-empty string"}, status=400
+            )
+    repo_scope = (
+        raw_repo_scope.strip()
+        if isinstance(raw_repo_scope, str) and raw_repo_scope.strip()
+        else None
+    )
     # Delete from vector store if active, else JSONL
     vs = _get_memory(state).vector_store
     vs_lessons = await asyncio.to_thread(vs.get_lessons) if vs else None
     if vs_lessons:
-        ok = await asyncio.to_thread(vs.delete_lesson, rule_sub)
+        if has_repo_scope:
+            ok = await asyncio.to_thread(vs.delete_lesson, rule_sub, repo_scope, exact=True)
+        else:
+            ok = await asyncio.to_thread(vs.delete_lesson, rule_sub)
     else:
         store = (
             _get_lessons(state, body.get("workspace")) if scope == "workspace" else (state.lessons)
@@ -2178,7 +2207,10 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
         # thread can be holding across file I/O for a concurrent save_or_enrich --
         # so calling it inline would let one lessons write stall every task on the
         # event loop. Same reason api_lessons_create offloads its write.
-        ok = await asyncio.to_thread(store.remove, rule_sub)
+        if has_repo_scope:
+            ok = await asyncio.to_thread(store.remove, rule_sub, repo_scope, exact=True)
+        else:
+            ok = await asyncio.to_thread(store.remove, rule_sub)
     if ok:
         state.push_refresh("lessons")
     return web.json_response({"ok": ok})
@@ -2423,7 +2455,7 @@ async def api_lessons(request: web.Request) -> web.Response:
         return web.json_response({"lessons": []})
     workspace = request.query.get("workspace")
 
-    def _safe_lesson(rule: object, category: object, ts: object) -> dict:
+    def _safe_lesson(rule: object, category: object, ts: object, repo_scope: object = None) -> dict:
         """One sanitization chokepoint for every branch of this endpoint.
 
         Lesson rows can carry consolidation (LLM) or import output: normalize
@@ -2434,12 +2466,25 @@ async def api_lessons(request: web.Request) -> web.Response:
         in either field. The JSONL store loads ``rule`` without type
         validation, so a malformed row can carry a non-string here; stringify
         before the redaction rather than crashing the endpoint.
+
+        ``repo_scope`` rides along so the client can DISTINGUISH a global lesson
+        from a scoped copy of the same rule and delete exactly one -- without it
+        the list shows two identical rows and Delete removes both. It is
+        agent-writable (learn_add accepts it) and SCOPE_FRAGMENT_RE permits
+        token-shaped segments, so a credential-shaped value could reach it; it
+        therefore goes through the SAME redaction chain as the prose fields
+        rather than being trusted as a bare path. A real repo path fragment
+        carries no credential pattern and passes through unchanged, so it still
+        round-trips for exact deletion; only a secret-shaped scope is masked,
+        which is the correct outcome for a value that must not egress raw.
         """
         if not isinstance(rule, str):
             rule = str(rule)
         safe_rule = _redact_memory_field(rule)
         safe_category = _redact_memory_field(normalize_lesson_category(category, strict=False))
-        return {"rule": safe_rule, "category": safe_category, "ts": ts}
+        scope = repo_scope.strip() if isinstance(repo_scope, str) and repo_scope.strip() else None
+        safe_scope = _redact_memory_field(scope) if scope is not None else None
+        return {"rule": safe_rule, "category": safe_category, "ts": ts, "repo_scope": safe_scope}
 
     # Read from vector store if it has lessons, else JSONL
     vs = _get_memory(state).vector_store
@@ -2448,7 +2493,7 @@ async def api_lessons(request: web.Request) -> web.Response:
         # Deferred import: ``vector_memory`` pulls snowballstemmer plus the
         # optional numpy/faiss imports, and this helper is the handler's only
         # use of it, on one dashboard read path.
-        from kiro_crew.vector_memory import _lesson_display_text
+        from kiro_crew.vector_memory import _lesson_display_text, _lesson_scope
 
         data = []
         for e in vs_lessons[-50:]:
@@ -2465,7 +2510,9 @@ async def api_lessons(request: web.Request) -> web.Response:
             # memory graph applies the same policy for the same reason.
             rule = _lesson_display_text(decoded) or str(decoded)
             raw_category = decoded.get("category") if isinstance(decoded, dict) else None
-            data.append(_safe_lesson(rule, raw_category, e.get("updated_at", "")))
+            data.append(
+                _safe_lesson(rule, raw_category, e.get("updated_at", ""), _lesson_scope(decoded))
+            )
     else:
         # Merge global + workspace-scoped lessons
         global_lessons = state.lessons.load_all()
@@ -2476,5 +2523,7 @@ async def api_lessons(request: web.Request) -> web.Response:
             for le in ws_lessons:
                 if le.rule.lower().strip() not in seen:
                     global_lessons.append(le)
-        data = [_safe_lesson(le.rule, le.category, le.ts) for le in global_lessons[-50:]]
+        data = [
+            _safe_lesson(le.rule, le.category, le.ts, le.repo_scope) for le in global_lessons[-50:]
+        ]
     return web.json_response({"lessons": data})

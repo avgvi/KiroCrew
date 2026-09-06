@@ -330,6 +330,9 @@
     "apps.awsControl.console.move_up": "Destination button in the move-file folder picker (AWS Control cloud drive): the PARENT folder of the one the file is in; {{name}} is that parent folder's name. \"Up\" as in one level up the folder tree.",
     "apps.awsControl.console.move_no_folders": "Empty state of the move-file folder picker (AWS Control cloud drive) when the file is at the top level and the current listing has no folders, so there is nowhere to move it.",
     "apps.awsControl.console.move_moving": "Progress line in the move-file folder picker (AWS Control cloud drive) while the server copies then deletes the object. The verb \"move\" in progress, same word as the row's Move action.",
-    "apps.awsControl.console.library_add_empty": "Empty state of the \"Add from Artifacts\" picker (AWS Control cloud drive) when the user has NO artifacts at all — distinct from library_add_none, which is a search or filter that matched nothing."
+    "apps.awsControl.console.library_add_empty": "Empty state of the \"Add from Artifacts\" picker (AWS Control cloud drive) when the user has NO artifacts at all — distinct from library_add_none, which is a search or filter that matched nothing.",
+    "pages.overview.memoryTab.repo_scope_label": "Accessible label for an optional text box where the user restricts a saved lesson to one code repository. \"Repository\" = a code repo (git). Noun phrase.",
+    "pages.overview.memoryTab.repo_scope_placeholder": "Placeholder in an optional text box. The user may leave it blank (the lesson then applies everywhere) or type a path fragment that one repository contains, e.g. src/kiro_crew, to restrict the lesson to that repo. Keep the example path src/kiro_crew literal — do not translate it.",
+    "pages.overview.memoryTab.lesson_not_deleted": "Error shown when a Delete request for a saved lesson failed (a rejected request or an ok:false response). It means nothing was removed. Short sentence."
   }
 }

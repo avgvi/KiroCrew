@@ -144,7 +144,9 @@ describe('client transport', () => {
 
     await api.deleteLesson('never force push')
     expect(call(1).headers['Content-Type']).toBe('application/json')
-    expect(call(1).body).toEqual({ rule: 'never force push' })
+    // repo_scope always rides along (null for a global lesson) so the backend
+    // deletes by exact (rule, repo_scope) identity, not a scope-blind substring.
+    expect(call(1).body).toEqual({ rule: 'never force push', repo_scope: null })
   })
 
   it('POST omits the body entirely when none is given', async () => {

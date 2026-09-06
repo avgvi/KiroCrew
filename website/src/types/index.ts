@@ -430,6 +430,10 @@ export interface CronJob {
 
 export interface Lesson {
   rule: string; category: string; ts: string
+  /** Path fragment this lesson is restricted to, or null/undefined when it
+   *  applies everywhere. Distinguishes a scoped lesson from a global copy of
+   *  the same rule so Delete can target exactly one. */
+  repo_scope?: string | null
 }
 
 export interface Skill {

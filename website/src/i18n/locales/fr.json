@@ -11368,7 +11368,10 @@
         "session_other": "{{count}} sessions",
         "summarize_now": "Résumer maintenant",
         "tool": "outil",
-        "when": "Quand"
+        "when": "Quand",
+        "repo_scope_label": "Portée du dépôt",
+        "repo_scope_placeholder": "Portée du dépôt (facultatif, p. ex. src/kiro_crew)",
+        "lesson_not_deleted": "Impossible de supprimer la leçon. Rien n'a été supprimé."
       },
       "portabilityTab": {
         "archive_contents": "Contenu de l'archive :",

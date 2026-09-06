@@ -7162,7 +7162,10 @@
         "session_other": "{{count}} sessions",
         "summarize_now": "Summarize now",
         "tool": "tool",
-        "when": "When"
+        "when": "When",
+        "repo_scope_label": "Repository scope",
+        "repo_scope_placeholder": "Repo scope (optional, e.g. src/kiro_crew)",
+        "lesson_not_deleted": "Could not delete the lesson. Nothing was removed."
       },
       "portabilityTab": {
         "archive_contents": "Archive contents:",

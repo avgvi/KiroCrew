@@ -23,7 +23,7 @@ from typing import Callable
 import pytest
 
 from kiro_crew import vector_memory as vm
-from kiro_crew.vector_memory import VectorMemoryStore, _lesson_display_text
+from kiro_crew.vector_memory import VectorMemoryStore, _lesson_display_text, _lesson_scope
 
 
 def _lesson_texts(store: VectorMemoryStore) -> list[str]:
@@ -384,6 +384,38 @@ class TestDeleteLesson:
         store = _store(tmp_path)
         assert store.write_lesson("Always pin the release tag before publishing a wheel")
         assert store.delete_lesson("something that is simply not there") is False
+
+    def test_exact_scope_delete_spares_the_global_twin(self, tmp_path: Path) -> None:
+        # A global and a repo-scoped copy of ONE rule are distinct records
+        # (keyed by _lesson_key(rule, repo_scope)). Deleting the scoped copy by
+        # exact (rule, repo_scope) identity must leave the global copy intact --
+        # the scope-blind substring path would remove both, an unrecoverable
+        # user_explicit hard delete. This is the test whose absence let the
+        # data-loss path through.
+        rule = "Prefer tabs over spaces"
+        store = _store(tmp_path)
+        assert store.write_lesson(rule)  # global
+        assert store.write_lesson(rule, repo_scope="src/kiro_crew")  # scoped
+        assert len(store.get_lessons()) == 2
+
+        # Delete only the scoped copy.
+        assert store.delete_lesson(rule, "src/kiro_crew", exact=True) is True
+        remaining = store.get_lessons()
+        assert len(remaining) == 1
+        # The survivor is the GLOBAL copy (no repo_scope).
+        assert _lesson_scope(json.loads(remaining[0]["value_json"])) is None
+
+        # Deleting the global copy leaves nothing, and does not need a scope.
+        assert store.delete_lesson(rule, None, exact=True) is True
+        assert store.get_lessons() == []
+
+    def test_exact_delete_does_not_match_a_substring(self, tmp_path: Path) -> None:
+        # exact=True must require the WHOLE rendered text to match, so a
+        # fragment of one rule cannot delete a different, longer rule.
+        store = _store(tmp_path)
+        assert store.write_lesson("Always pin the release tag before publishing a wheel")
+        assert store.delete_lesson("release tag", None, exact=True) is False
+        assert len(store.get_lessons()) == 1
 
 
 class TestContradictionCandidateBlobRecovery:

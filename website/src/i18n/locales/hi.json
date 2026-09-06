@@ -11206,7 +11206,10 @@
         "session_other": "{{count}} सत्र",
         "summarize_now": "अभी सारांश बनाएँ",
         "tool": "टूल",
-        "when": "कब"
+        "when": "कब",
+        "repo_scope_label": "रिपॉज़िटरी स्कोप",
+        "repo_scope_placeholder": "रिपॉज़िटरी स्कोप (वैकल्पिक, जैसे src/kiro_crew)",
+        "lesson_not_deleted": "पाठ हटाया नहीं जा सका। कुछ भी नहीं हटाया गया।"
       },
       "portabilityTab": {
         "archive_contents": "आर्काइव की सामग्री:",

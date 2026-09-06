@@ -3,6 +3,7 @@ import { XCircle, AlertTriangle, CheckCircle, RefreshCw, Hourglass, Check, BookO
 import { api } from '../../api/client'
 import { Card, CardTitle, Btn, SendBtn, Input, Badge, EmptyState } from '../../components/ui'
 import InfoTip from '../../components/InfoTip'
+import ErrorNotice from '../../components/ErrorNotice'
 import SimpleSelect from '../../components/SimpleSelect'
 import { esc } from '../../api/helpers'
 import VectorMemoryCard from './VectorMemoryCard'
@@ -16,7 +17,9 @@ import { fmtDateTimeNumeric } from '../../i18n/format'
 export default function MemoryTab({ refreshTrigger }: { refreshTrigger: number }) {
   const [pref, setPref] = useState(''); const [proj, setProj] = useState(''); const [hist, setHist] = useState('')
   const [prefSaved, setPrefSaved] = useState(false); const [projSaved, setProjSaved] = useState(false); const [histSaved, setHistSaved] = useState(false)
-  const [lessons, setLessons] = useState<Lesson[]>([]); const [rule, setRule] = useState(''); const [cat, setCat] = useState('knowledge')
+  const [lessons, setLessons] = useState<Lesson[]>([]); const [rule, setRule] = useState(''); const [cat, setCat] = useState('knowledge'); const [scope, setScope] = useState('')
+  const [lessonError, setLessonError] = useState<string | null>(null)
+  const [savingLesson, setSavingLesson] = useState(false)
   const [lessonFeedback, setLessonFeedback] = useState<{
     tone: 'info' | 'warning' | 'error'
     text: string
@@ -76,16 +79,49 @@ export default function MemoryTab({ refreshTrigger }: { refreshTrigger: number }
     scheduleClear(() => setConsolidateMsg(''), 4000)
   }
   const addLesson = async () => {
-    if (!rule) return
+    if (!rule || savingLesson) return
     setLessonFeedback(null)
-    const result = await api.createLesson(rule, cat)
+    setLessonError(null)
+    // Hold the row disabled for the whole in-flight save. Without this, the
+    // rule/scope boxes stay editable during the await, and the setRule('') /
+    // setScope('') that runs on completion would erase a value the user typed
+    // WHILE the request was in flight — an ordinary async race. Disabling the
+    // inputs and the button for the await window closes that race at the source
+    // for both fields, rather than diffing submitted-vs-current per field.
+    setSavingLesson(true)
+    // A blank scope box sends no repo_scope, so the lesson applies everywhere —
+    // the store's default and the behaviour before this box existed. Only a
+    // filled box narrows the lesson to one repository.
+    let result
+    try {
+      result = await api.createLesson(rule, cat, scope.trim() || undefined)
+    } catch (e) {
+      // A malformed scope (e.g. "." or a leading slash) fails the backend's
+      // SCOPE_FRAGMENT_RE, so /api/lessons returns HTTP 400 and the client's
+      // j() throws an ApiError. Without this catch, Add would silently do
+      // nothing and leave the inputs uncleared. Surface it through ErrorNotice
+      // (the one error surface, per errors-use-error-notice), which recovers
+      // the endpoint/status/code from the error journal by message. The rule
+      // and scope drafts are deliberately LEFT in their boxes so the user can
+      // correct the scope and retry — nothing was saved.
+      setLessonError(e instanceof Error ? e.message : String(e))
+      return
+    } finally {
+      setSavingLesson(false)
+    }
     if (result.outcome === 'inserted' || result.outcome === 'enriched') {
       setRule('')
+      setScope('')
       await loadLessons()
       return
     }
     if (result.outcome === 'unchanged') {
+      // 'unchanged' means the submission completed against an already-stored
+      // lesson and nothing needs retrying, so clear BOTH drafts — matching the
+      // inserted/enriched branch. Clearing only rule would leave a stale repo
+      // scope in the box that the next, unrelated Add would silently inherit.
       setRule('')
+      setScope('')
       setLessonFeedback({
         tone: 'info',
         text: i18nT('pages.overview.memoryTab.lesson_already_stored'),
@@ -107,6 +143,26 @@ export default function MemoryTab({ refreshTrigger }: { refreshTrigger: number }
         reason: result.reason,
       }),
     })
+  }
+  // Delete is a destructive request that can fail (session gone, storage error,
+  // an ok:false from the route). Without surfacing that, the row would appear
+  // to stay for no reason. Route both a thrown ApiError and an ok:false through
+  // ErrorNotice (the one error surface, per errors-use-error-notice); only
+  // re-read the list when a delete actually happened.
+  const deleteLessonRow = async (rule: string, repoScope: string | null) => {
+    setLessonError(null)
+    let res: { ok?: boolean } | null = null
+    try {
+      res = await api.deleteLesson(rule, repoScope)
+    } catch (e) {
+      setLessonError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    if (res && res.ok === false) {
+      setLessonError(i18nT('pages.overview.memoryTab.lesson_not_deleted'))
+      return
+    }
+    loadLessons()
   }
   return (<>
     {/* Graph/vector internals live on the Developer page (Memory tab); this
@@ -144,7 +200,7 @@ export default function MemoryTab({ refreshTrigger }: { refreshTrigger: number }
     {!vectorActive && (
       <Card><CardTitle>{i18nT('pages.overview.memoryTab.lessons')} <InfoTip text={i18nT('pages.overview.memoryTab.persistent_lessons_injected_into_every_session_a')} /></CardTitle>
       <div className="flex gap-2 items-center flex-wrap mb-3">
-        <Input placeholder={i18nT('pages.overview.memoryTab.rule_e_g_always_use_tabs_not_spaces')} style={{ flex: 2 }} value={rule} onChange={e => setRule(e.target.value)} />
+        <Input placeholder={i18nT('pages.overview.memoryTab.rule_e_g_always_use_tabs_not_spaces')} style={{ flex: 2 }} value={rule} onChange={e => setRule(e.target.value)} disabled={savingLesson} />
         <SimpleSelect
           aria-label={i18nT('pages.overview.memoryTab.category')}
           style={{ flex: '0 0 140px' }}
@@ -153,7 +209,8 @@ export default function MemoryTab({ refreshTrigger }: { refreshTrigger: number }
           value={cat}
           onChange={setCat}
         />
-        <SendBtn onClick={addLesson}>{i18nT('pages.overview.memoryTab.add')}</SendBtn>
+        <Input aria-label={i18nT('pages.overview.memoryTab.repo_scope_label')} placeholder={i18nT('pages.overview.memoryTab.repo_scope_placeholder')} style={{ flex: '0 0 200px' }} value={scope} onChange={e => setScope(e.target.value)} disabled={savingLesson} />
+        <SendBtn onClick={addLesson} disabled={savingLesson}>{i18nT('pages.overview.memoryTab.add')}</SendBtn>
         {lessonFeedback && (
           <span
             role={lessonFeedback.tone === 'error' ? 'alert' : 'status'}
@@ -168,11 +225,20 @@ export default function MemoryTab({ refreshTrigger }: { refreshTrigger: number }
             {lessonFeedback.text}
           </span>
         )}
+        {/* No hand-off: askAgent stays OFF on this notice because the hand-off
+            navigates to the chat and unmounts this row, which would destroy the
+            unsaved add-lesson drafts still in the box -- the `rule` and repo
+            `scope` inputs. It surfaces both a caught add failure (an invalid
+            scope rejected 400) and a caught delete failure; in the add case the
+            drafts are live and unsaved, so the no-hand-off form applies. Renders
+            through ErrorNotice (the one error surface), inline to sit in this
+            flex row. */}
+        <ErrorNotice message={lessonError} variant="inline" onDismiss={() => setLessonError(null)} />
       </div>
       <table className="w-full border-collapse table-striped"><thead><tr><SortableHeader label={i18nT('pages.overview.memoryTab.rule')} sortKey="rule" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.category')} sortKey="category" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.when')} sortKey="ts" sort={lessonSort} onToggle={toggleLessonSort} /><th aria-label={i18nT('pages.overview.memoryTab.actions')} className="text-left text-muted text-[12px] uppercase tracking-[.04em] px-2.5 py-2 border-b border-border font-medium"></th></tr></thead>
         <tbody>{lessons.length === 0 ? <tr><td colSpan={4}><EmptyState icon={<BookOpen className="lucide-inline" />} title={i18nT('pages.overview.memoryTab.no_lessons_yet')} subtitle={i18nT('pages.overview.memoryTab.lessons_empty_subtitle')} /></td></tr> : sortedLessons.map((l) => (
-          <tr key={`${l.rule}-${l.ts}`} className="hover:bg-bg-hover transition-colors"><td className="px-2.5 py-2 border-b border-border text-sm">{esc(l.rule)}</td><td className="px-2.5 py-2 border-b border-border text-sm"><Badge variant="ok">{l.category}</Badge></td><td className="px-2.5 py-2 border-b border-border text-sm">{fmtDateTimeNumeric(l.ts)}</td>
-            <td className="px-2.5 py-2 border-b border-border text-sm"><Btn danger onClick={async () => { await api.deleteLesson(l.rule); loadLessons() }}>{i18nT('pages.overview.memoryTab.delete')}</Btn></td></tr>
+          <tr key={`${l.rule}-${l.repo_scope ?? ''}-${l.ts}`} className="hover:bg-bg-hover transition-colors"><td className="px-2.5 py-2 border-b border-border text-sm">{esc(l.rule)}{l.repo_scope ? <Badge variant="muted" className="ml-2">{esc(l.repo_scope)}</Badge> : null}</td><td className="px-2.5 py-2 border-b border-border text-sm"><Badge variant="ok">{l.category}</Badge></td><td className="px-2.5 py-2 border-b border-border text-sm">{fmtDateTimeNumeric(l.ts)}</td>
+            <td className="px-2.5 py-2 border-b border-border text-sm"><Btn danger onClick={() => deleteLessonRow(l.rule, l.repo_scope ?? null)}>{i18nT('pages.overview.memoryTab.delete')}</Btn></td></tr>
         ))}</tbody></table></Card>
     )}
   </>)

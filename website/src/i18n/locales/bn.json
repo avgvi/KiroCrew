@@ -11206,7 +11206,10 @@
         "session_other": "{{count}}টি সেশন",
         "summarize_now": "এখনই সারসংক্ষেপ করুন",
         "tool": "টুল",
-        "when": "কখন"
+        "when": "কখন",
+        "repo_scope_label": "রিপোজিটরি স্কোপ",
+        "repo_scope_placeholder": "রিপো স্কোপ (ঐচ্ছিক, যেমন src/kiro_crew)",
+        "lesson_not_deleted": "পাঠটি মুছে ফেলা যায়নি। কিছুই সরানো হয়নি।"
       },
       "portabilityTab": {
         "archive_contents": "আর্কাইভের বিষয়বস্তু:",

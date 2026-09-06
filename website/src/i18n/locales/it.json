@@ -11368,7 +11368,10 @@
         "session_other": "{{count}} sessioni",
         "summarize_now": "Riepiloga ora",
         "tool": "strumento",
-        "when": "Quando"
+        "when": "Quando",
+        "repo_scope_label": "Ambito del repository",
+        "repo_scope_placeholder": "Ambito del repo (facoltativo, es. src/kiro_crew)",
+        "lesson_not_deleted": "Impossibile eliminare la lezione. Non è stato rimosso nulla."
       },
       "portabilityTab": {
         "archive_contents": "Contenuto dell'archivio:",

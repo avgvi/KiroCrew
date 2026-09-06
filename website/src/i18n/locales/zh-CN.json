@@ -11044,7 +11044,10 @@
         "session_other": "{{count}} 个会话",
         "summarize_now": "立即总结",
         "tool": "工具",
-        "when": "时间"
+        "when": "时间",
+        "repo_scope_label": "仓库范围",
+        "repo_scope_placeholder": "仓库范围（可选，例如 src/kiro_crew）",
+        "lesson_not_deleted": "无法删除该经验，未删除任何内容。"
       },
       "portabilityTab": {
         "archive_contents": "压缩包内容：",

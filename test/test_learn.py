@@ -55,6 +55,31 @@ class TestLessonStore:
         assert not store.remove("nonexistent")
         assert len(store.load_all()) == 1
 
+    def test_exact_scope_remove_spares_the_global_twin(self, tmp_path: Path) -> None:
+        # A global and a repo-scoped copy of ONE rule are distinct rows under
+        # the store's (rule, repo_scope) identity. Removing the scoped copy by
+        # exact (rule, repo_scope) identity must leave the global copy -- a
+        # scope-blind substring remove deletes both with no recovery.
+        store = LessonStore(base_dir=tmp_path)
+        rule = "Prefer tabs over spaces"
+        store.save(_make_lesson(rule))
+        store.save(Lesson(ts="2026-01-01T00:00:00Z", rule=rule, category="knowledge", repo_scope="src/kiro_crew"))
+        assert len(store.load_all()) == 2
+
+        assert store.remove(rule, "src/kiro_crew", exact=True)
+        remaining = store.load_all()
+        assert len(remaining) == 1
+        assert remaining[0].repo_scope is None  # the global copy survived
+
+        assert store.remove(rule, None, exact=True)
+        assert store.load_all() == []
+
+    def test_exact_remove_does_not_match_a_substring(self, tmp_path: Path) -> None:
+        store = LessonStore(base_dir=tmp_path)
+        store.save(_make_lesson("Always pin the release tag"))
+        assert not store.remove("release tag", None, exact=True)
+        assert len(store.load_all()) == 1
+
     def test_get_context_empty(self, tmp_path: Path) -> None:
         store = LessonStore(base_dir=tmp_path)
         assert store.get_context() == ""

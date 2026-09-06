@@ -2645,13 +2645,22 @@ export const api = {
 
   // Lessons
   lessons: () => fetch('/api/lessons').then(j),
-  createLesson: (rule: string, category: string) =>
-    post('/api/lessons', { rule, category }).then(j) as Promise<{
+  createLesson: (rule: string, category: string, repoScope?: string) =>
+    // repoScope restricts the lesson to one repository (a path fragment that
+    // repo contains); the backend gates injection on it. Omitting it — or
+    // sending an empty box — sends no repo_scope key at all, so the lesson
+    // applies everywhere, which is the store's default and the pre-affordance
+    // behaviour. Only a non-empty box adds the field, so a caller that never
+    // touches scope is byte-identical to before this affordance existed.
+    post('/api/lessons', repoScope ? { rule, category, repo_scope: repoScope } : { rule, category }).then(j) as Promise<{
       ok: boolean
       outcome: 'inserted' | 'enriched' | 'unchanged' | 'deduped' | 'refused'
       reason: string
     }>,
-  deleteLesson: (rule: string) => del('/api/lessons', { rule }).then(j),
+  // Always send repo_scope (null for a global lesson) so the backend deletes by
+  // EXACT (rule, repo_scope) identity, not a scope-blind substring that would
+  // remove a global and a scoped copy of the same rule together.
+  deleteLesson: (rule: string, repoScope: string | null = null) => del('/api/lessons', { rule, repo_scope: repoScope }).then(j),
   // Hooks
   hooks: () => fetch('/api/hooks').then(j),
   kiroHooks: () => fetch('/api/kiro-hooks').then(j),
