@@ -9,6 +9,7 @@ import pytest
 
 from kiro_crew.slack import handler as handler_mod
 from kiro_crew.slack.handler import _vc, load_voice_reply_config, set_orch_cfg
+from kiro_crew.voice_reply import DEFAULT_PROVIDER, PROVIDER_POLLY
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +133,10 @@ def test_provider_typo_falls_back_to_local_with_warning(tmp_path, monkeypatch, c
     _cfg_file(tmp_path, monkeypatch, {"provider": "ploly"})
     with caplog.at_level(logging.WARNING, logger="kiro_crew.slack.handler"):
         set_orch_cfg(SimpleNamespace())
-    assert _vc.provider == "piper"
+    assert _vc.provider == DEFAULT_PROVIDER
+    # The direction is the point: a bad or absent value must never resolve
+    # to the paid cloud provider.
+    assert _vc.provider != PROVIDER_POLLY
     assert any(
         "voice_reply.provider" in rec.message and "ploly" in rec.message for rec in caplog.records
     ), "expected a warning log naming the bad provider value"
@@ -141,7 +145,10 @@ def test_provider_typo_falls_back_to_local_with_warning(tmp_path, monkeypatch, c
 def test_provider_empty_string_falls_back_to_local(tmp_path, monkeypatch):
     _cfg_file(tmp_path, monkeypatch, {"provider": ""})
     set_orch_cfg(SimpleNamespace())
-    assert _vc.provider == "piper"
+    assert _vc.provider == DEFAULT_PROVIDER
+    # The direction is the point: a bad or absent value must never resolve
+    # to the paid cloud provider.
+    assert _vc.provider != PROVIDER_POLLY
 
 
 def test_provider_omitted_defaults_to_local(tmp_path, monkeypatch):
@@ -153,7 +160,10 @@ def test_provider_omitted_defaults_to_local(tmp_path, monkeypatch):
     """
     _cfg_file(tmp_path, monkeypatch, {})
     set_orch_cfg(SimpleNamespace())
-    assert _vc.provider == "piper"
+    assert _vc.provider == DEFAULT_PROVIDER
+    # The direction is the point: a bad or absent value must never resolve
+    # to the paid cloud provider.
+    assert _vc.provider != PROVIDER_POLLY
 
 
 # ── restore without a Slack orchestrator (dashboard-only gateway) ────────
