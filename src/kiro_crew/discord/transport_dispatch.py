@@ -72,6 +72,7 @@ from kiro_crew.messaging.dispatch import (
 )
 from kiro_crew.messaging.driver import APPROVAL_INTERACTIVE, TurnDriver
 from kiro_crew.messaging.identity import channel_inbound_permitted, publish_turn_identity
+from kiro_crew.messaging.inbound_spool import InboundRoute, spool_refused_turn
 from kiro_crew.messaging.link import (
     ChannelLink,
     bind_origin_mirror,
@@ -902,6 +903,27 @@ class DiscordDispatcher:
             )
             if monitor_completion is not None:
                 return MonitorDispatchResult.BUSY
+            # Durable inbound spool (issue #2217), for a USER message only — the
+            # monitor branch above returns first. A monitor turn is generated
+            # work whose own loop re-fires after the restart, so spooling it
+            # would replay a check the loop is about to run again anyway.
+            # Discord has no per-message ack and its resume state is in-memory,
+            # so our own disk is the only thing that can carry this across the
+            # restart.
+            await spool_refused_turn(
+                channel_type="discord",
+                route=InboundRoute(
+                    conversation_id=channel_id,
+                    # ``msg.text``, NOT the local ``text``: by here the latter has
+                    # attachment context appended, whose inlined temp paths are
+                    # gone after a restart. The spool wants what the user typed.
+                    text=msg.text,
+                    user_id=user_id,
+                    thread_id=thread_id or "",
+                    message_id=str(getattr(msg, "message_id", "") or ""),
+                    attachments_dropped=len(getattr(msg, "attachments", None) or ()),
+                ),
+            )
         except Exception:
             logger.exception("Discord transport_dispatch: error handling message")
             if monitor_completion is not None:

@@ -62,6 +62,7 @@ from kiro_crew.messaging.dispatch import (
 )
 from kiro_crew.messaging.driver import APPROVAL_INTERACTIVE, TurnDriver
 from kiro_crew.messaging.identity import channel_inbound_permitted, publish_turn_identity
+from kiro_crew.messaging.inbound_spool import InboundRoute, spool_refused_turn
 from kiro_crew.messaging.link import (
     CHAT_TYPE_DIRECT,
     CHAT_TYPE_FORUM,
@@ -1107,6 +1108,28 @@ class TelegramDispatcher:
             logger.info(
                 "Telegram: aborting dispatch for %s — gateway is shutting down",
                 session_key,
+            )
+            # Durable inbound spool (issue #2217). Written HERE and nowhere else:
+            # this is the one point where the payload is still in memory AND the
+            # turn is provably unopened, so a replay on the next start cannot
+            # double-answer a turn that actually ran. Telegram cannot recover this
+            # from its own offset either — ``_persistable_offset`` bounds duplicate
+            # replay, not loss, because the next long poll server-confirms the
+            # batch it just dispatched.
+            await spool_refused_turn(
+                channel_type="telegram",
+                route=InboundRoute(
+                    conversation_id=str(chat_id),
+                    # ``msg.text``, NOT the local ``text``: by here the latter has
+                    # attachment context appended, whose inlined temp paths are
+                    # gone after a restart, and may have had a mid-turn override
+                    # prefix stripped. The spool wants what the user typed.
+                    text=msg.text,
+                    user_id=str(user_id),
+                    thread_id=str(reply_thread) if reply_thread else "",
+                    message_id=str(getattr(msg, "message_id", "") or ""),
+                    attachments_dropped=len(getattr(msg, "attachments", None) or ()),
+                ),
             )
         except Exception as exc:
             logger.exception("Telegram transport_dispatch: error handling message")

@@ -30,6 +30,7 @@ from kiro_crew.messaging.dispatch import (
     inbound_permitted,
 )
 from kiro_crew.messaging.driver import APPROVAL_INTERACTIVE
+from kiro_crew.messaging.inbound_spool import InboundRoute
 from kiro_crew.messaging.link import build_dm_session_key, seed_generation
 from kiro_crew.messaging.transport import InboundMessage
 from kiro_crew.whatsapp.commands import (
@@ -335,6 +336,29 @@ class WhatsAppDispatcher:
                 channel_type="whatsapp",
                 session_key=session_key,
                 conversation_id=f"whatsapp:{scope}",
+                # Durable inbound spool (issue #2217): DMs ONLY. The replay is a
+                # restart notice gated on ``may_send_to``, and this transport's
+                # ``may_send_to`` answers from ``dm_policy`` alone -- it knows
+                # nothing of the group roster, so a group removed or set to ``off``
+                # while the gateway was down would still receive the notice.
+                # Rather than teach the egress gate a roster it was never asked to
+                # hold, group routes are not declared and a refused group message
+                # degrades exactly as before this seam (tracked in #9144).
+                #
+                # ``text`` is ``inbound.text``, NOT ``user_text``: the latter can
+                # carry ``build_silence_contract(verdict.rules)`` -- private
+                # operating rules -- prepended to the model prompt, and the notice
+                # quotes the spooled text back into the conversation.
+                inbound_route=(
+                    None
+                    if group
+                    else InboundRoute(
+                        conversation_id=inbound.conversation_id,
+                        text=inbound.text,
+                        user_id=inbound.user_id,
+                        attachments_dropped=len(inbound.attachments or ()),
+                    )
+                ),
                 agent=agent,
                 user_text=user_text,
                 renderer=renderer,
