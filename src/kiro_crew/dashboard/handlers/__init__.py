@@ -517,6 +517,14 @@ from kiro_crew.dashboard.handlers.usage import (  # noqa: E402, F401
     api_usage,
 )
 
+# ── Conductor work ledger (handlers/work_ledger.py) ──
+from kiro_crew.dashboard.handlers.work_ledger import (  # noqa: E402, F401
+    api_work_brief,
+    api_work_ledger_get,
+    api_work_ledger_record,
+    api_work_report,
+)
+
 # ── Themes: validation/parsing core (extracted to theme_validate.py) ──
 from kiro_crew.dashboard.theme_validate import (  # noqa: E402, F401
     _CSS_VALUE_ALLOWED_RE,
