@@ -12946,7 +12946,14 @@
         "distribution_error_misconfigured_detail": "无法解析此主机上的中央策略声明，因此未获取任何上限。",
         "distribution_refresh_rejected_detail": "上一次策略刷新被来源拒绝。",
         "distribution_refresh_unreachable_detail": "上一次策略刷新无法连接来源。",
-        "denied_commands_load_failed": "无法加载禁用命令规则。下方列表为空是因为读取失败，而不是没有规则。"
+        "denied_commands_load_failed": "无法加载禁用命令规则。下方列表为空是因为读取失败，而不是没有规则。",
+        "default_approval_mode_title": "新对话的默认审批模式",
+        "default_approval_mode_desc": "新对话启动时使用的审批模式。已经打开的对话不会改变，每个对话仍可在其消息框的选择器中更改。",
+        "default_approval_mode_save_failed": "保存失败。新对话仍会使用你点击之前的设置。",
+        "default_approval_mode_load_failed": "无法读取此设置，因此未显示任何选中项。新对话实际使用的设置并未改变。请重新加载以查看。",
+        "new_chat_defaults_section": "新对话默认设置",
+        "default_approval_mode_trust_note": "此处不提供 Trust。它会在不询问的情况下执行工具，因此仍是在消息框中逐个对话选择的设置。",
+        "default_approval_mode_overridden": "已保存的值 {{value}} 在此不会生效，因此新对话将以 Normal 开始。"
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "将聊天标签切换绑定到 Ctrl+数字，而不是 Option+数字",

@@ -1851,6 +1851,32 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.role_efforts.background": {"type": "enum", "values": ["", *EFFORT_LEVELS]},
     "agent.role_efforts.subagent": {"type": "enum", "values": ["", *EFFORT_LEVELS]},
     "agent.approval_mode": {"type": "enum", "values": ["auto", "interactive"]},
+    # Which approval tier a NEWLY CREATED chat session starts in. Distinct from
+    # ``agent.approval_mode`` above, which is the agent's own auto/interactive
+    # axis -- this one names a dashboard session tier and its vocabulary is the
+    # picker's (``APPROVAL_SEGMENTS``). ``yolo`` is absent because it is a
+    # process-global grant with its own duration, not a per-session tier. The two
+    # values here are a strict SUBSET of the modes the ``approval_modes`` policy
+    # scope may never forbid, so this cannot select past an admin ceiling; `trust`
+    # is excluded for the separate reason given below.
+    "agent.default_approval_mode": {
+        "type": "enum",
+        # `trust` is NOT persistable -- it is the only tier that writes the session
+        # `approval_policy` "auto" (unattended auto-approve, inherited by subagents),
+        # so storing it would turn one session's trust into standing trust. The footer
+        # picker still offers it per-chat; only persistence is refused.
+        "values": ["normal", "trust_reads"],
+        # OWNER-ONLY, unlike every other entry here. This one is a STANDING grant:
+        # `trust` auto-approves tools in every chat opened from now on, with no
+        # expiry -- which is the property that makes the never-expiring
+        # `agent.dangerously_skip_permissions` config-file-only (see the note under
+        # `agent.yolo_duration` below). This handler applies no owner gate of its
+        # own, while sibling handler modules do, so an allow-listed non-owner
+        # identity holds a dashboard credential with an EMPTY app claim and would
+        # otherwise reach this write. Being authenticated is not enough to raise the
+        # floor for every future session.
+        "owner_only": True,
+    },
     # How long an AD-HOC auto-approve grant lasts. Editable from Settings because
     # every value here still ends: the timed ones are capped at the SafetyOverride
     # 24h ceiling and "until_shutdown" dies with the process. The never-expiring
@@ -2130,6 +2156,20 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
         if path_key in _MOVED_CONFIG_FIELDS:
             return _deny(_MOVED_CONFIG_FIELDS[path_key], f"{path_key}={value}")
         return _deny(f"field not editable: {path_key}", f"{path_key}={value}")
+
+    # Per-key owner gate. Deny-by-default on a positive owner assertion, not on the
+    # absence of an app claim: an allow-listed messaging identity carries a dashboard
+    # credential whose subject is not the owner and whose `app` claim is empty, so
+    # only an explicit owner check keeps it out. Keys without the flag are unchanged.
+    if spec.get("owner_only"):
+        from kiro_crew.dashboard.handlers._shared import _owner_denial_response
+        from kiro_crew.dashboard.handlers.source_providers import (
+            is_owner_dashboard_request,
+        )
+
+        if not is_owner_dashboard_request(request):
+            _log_sel("denied", f"owner_only:{path_key}")
+            return _owner_denial_response(request, f"{path_key} is owner-only")
 
     # Validate value
     if spec["type"] == "enum":

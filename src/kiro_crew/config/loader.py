@@ -2725,6 +2725,9 @@ class KiroCrewConfig:
                 jail=_normalize_jail(agent_data.get("jail", "auto")),
                 dangerously_skip_permissions=_read_skip_permissions(agent_data),
                 yolo_duration=_normalize_yolo_duration(agent_data.get("yolo_duration")),
+                default_approval_mode=_sections._normalize_default_approval_mode(
+                    agent_data.get("default_approval_mode")
+                ),
                 notify_override_expiry=agent_data.get("notify_override_expiry", True),
                 conductor_skill=agent_data.get("conductor_skill", False),
                 tool_search=bool(agent_data.get("tool_search", True)),

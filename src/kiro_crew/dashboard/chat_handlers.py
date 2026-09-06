@@ -37,6 +37,7 @@ from kiro_crew.config.loader import (
     published_autocompact_pct,
     resolve_agent_bindings,
 )
+from kiro_crew.config.sections import _DEFAULT_APPROVAL_MODES
 from kiro_crew.dashboard import remote_mirror
 from kiro_crew.dashboard.channel_slots import channel_slot_name, note_slot_closed
 from kiro_crew.dashboard.chat_auto_tag import maybe_auto_tag
@@ -168,6 +169,73 @@ _SESSION_RELOAD_NOTICE = (
 # a request-supplied value, and tuple `in` compares by equality rather than
 # hashing, so a non-string body value answers False instead of raising.
 _SLOT_SCOPED_TRUST_MODES = ("trust", "trust_reads")
+
+
+def _apply_default_approval_mode(state: "DashboardState", slot: "_ChatSlot", mode: str) -> bool:
+    """Put a BRAND-NEW slot on the configured ``agent.default_approval_mode`` tier.
+
+    Creation-time only. The caller must have established that the slot was just
+    minted -- re-tiering a session the user is merely re-opening is exactly the
+    hazard this must not create, and ``api_chat_slot_create`` gates the call on
+    its existing ``is_new_slot``.
+
+    ONE tier is persistable, and this function implements only that one:
+
+    * ``trust_reads`` -> ``_trust_reads`` only, session policy left ``""``
+
+    which is byte-for-byte what the footer picker produces for the same tier through
+    ``api_chat_mode``, so a tier reached from config does not mean something
+    different from the same tier reached from a click.
+
+    ``trust`` is NOT handled here and is not persistable. It is the only tier that
+    also writes session policy ``"auto"`` -- which
+    ``subagent_manager/admission.py``'s ``parent_trusted`` reads on a path
+    INDEPENDENT of ``safety_override().is_active()`` (see #8849), so it grants
+    unattended auto-approve to a session AND to the subagents it spawns. Since
+    ``config.json`` is agent-writable and that write is auto-approved inside a
+    session that is already trusted, a persistable ``trust`` would let one session's
+    trust become STANDING trust. The branch is DELETED rather than guarded: while it
+    existed it was only unreachable, which is contingent on nothing supplying
+    ``trust``, and a later widening would have revived the grant silently.
+
+    ``normal`` deliberately writes nothing: a fresh slot already starts
+    ``_trust=False`` / ``_trust_reads=False`` with no session policy
+    (``state.py``'s ``_ChatSlot`` initializers), so ``normal`` IS the untouched
+    state and touching it could only introduce a difference.
+
+    What is NOT replicated, and why -- both are properties of a just-minted slot
+    rather than exceptions being taken:
+
+    * the sharing-propagation loop, which exists so that several slots resolving
+      to ONE effective session key cannot disagree. A slot created here is minted
+      with a fresh key and no ``linked_session_key``, so it shares with nothing.
+    * Slack channel-trust propagation, which keys off ``slot._slack_channel``. A
+      dashboard-created slot has no channel binding at birth.
+
+    Returns True when a tier other than ``normal`` was applied, so the caller can
+    audit it. No return value is used as authorization.
+    """
+    # `!= "trust_reads"` rather than membership in `_SLOT_SCOPED_TRUST_MODES`: that
+    # tuple is the PER-CHAT vocabulary and still contains `trust`, so testing against
+    # it would make this helper's reach depend on a set that exists for another
+    # purpose. Clamped to the PERSISTABLE set instead, and asserted below.
+    if mode != "trust_reads":
+        # Includes "normal", "trust", and anything a hand-edited config supplies.
+        return False
+    # There is deliberately NO `trust` branch, and no `set_approval_policy(..., "auto")`
+    # anywhere in this function. `trust` was removed rather than guarded: while the
+    # branch existed it was merely UNREACHABLE -- correct only for as long as nothing
+    # could supply `trust` -- and a later change that widened the persistable set would
+    # have revived an unattended auto-approve grant with no test failing. Deleting the
+    # machinery makes the property structural instead of contingent.
+    #
+    # This does NOT narrow what a session can be set to interactively: `api_chat_mode`
+    # owns that path and writes its own policy (see its `set_approval_policy` calls),
+    # and this helper has exactly one caller, `api_chat_slot_create`.
+    assert mode in _DEFAULT_APPROVAL_MODES, f"{mode!r} is not persistable"
+    slot._trust_reads = True
+    state.sessions.set_approval_policy(effective_session_key(slot), "")
+    return True
 
 
 def _sweep_stale_permissions(slot: "_ChatSlot") -> None:
@@ -2269,6 +2337,25 @@ async def api_chat_slot_detail(request: web.Request) -> web.Response:
 # allowlists deliberately stay narrower — do not "sync" them to this one.
 _CREATABLE_MODES = ("", "orchestrator", "crew", "design-critique")
 
+# Modes whose slots the user actually SEES and drives -- exactly what ChatPage's
+# filteredSlots renders. An ALLOWLIST, not a denylist of app-worker modes: the
+# default approval tier means "the chat I just opened", so a mode that is not on the
+# sidebar has no user watching it, and a standing auto-approve grant there runs
+# tools unattended. Adding a new app-worker mode must NOT silently inherit the tier,
+# so a new mode is excluded until it is deliberately listed here.
+_TIER_INHERITING_MODES = ("", "orchestrator", "crew")
+
+
+def _is_owner_dashboard_request(request: web.Request) -> bool:
+    """Owner assertion for the default-tier gates.
+
+    Imported lazily, like the other uses of this helper in this module, to keep the
+    handler module free of an import cycle with the handlers package.
+    """
+    from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
+
+    return bool(is_owner_dashboard_request(request))
+
 
 async def api_chat_slot_create(request: web.Request) -> web.Response:
     """POST /api/chat/slots — create a new chat slot."""
@@ -2533,6 +2620,58 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
     # Computed on the normalized key, which is the key the slot store is built
     # from; an omitted (or degenerate) name is always a mint.
     _requested_key = _normalize_slot_key(str(name)) if name else ""
+    # `KiroCrewConfig.load` can stat/read config.json, so it goes off-loop exactly
+    # as the two sibling reads in this module do, and a read failure falls back to
+    # "normal" -- the interactive floor -- so a broken config asks for MORE
+    # approvals rather than silently granting any.
+    #
+    # Resolved BEFORE `is_new_slot` is computed, on purpose. This read is the only
+    # `await` between that check and `get_or_create_slot` below, and an await there
+    # is a TOCTOU window: a concurrent create can insert the same slot key while
+    # this coroutine is suspended, after which `get_or_create_slot` returns the
+    # OTHER caller's slot while a stale `is_new_slot` still says the slot is fresh
+    # -- and the tier would land on a session this request did not create. Hoisting
+    # the read above the check restores what the handler relied on before this
+    # change: the check and the allocation are atomic with respect to the event
+    # loop. The cost is one config read on re-opens that will not use it.
+    # `not instance_id` excludes a session bound to a REMOTE crew. For those the
+    # PEER enforces approvals, and this setting is the local crew's preference: the
+    # local flags would drive what the footer DISPLAYS while the peer decided what
+    # actually runs, so a peer at Normal could show Trust here, or the reverse.
+    # Mirroring the peer's effective tier would need a defined path to read it, and
+    # there is none -- `create_peer_slot` returns no tier -- so this declines to
+    # guess rather than shipping a display that can contradict enforcement. A
+    # remote-bound session keeps today's behaviour: whatever the peer says.
+    # OWNER-ONLY, the same bar as persisting the value. The tier is the OWNER's
+    # standing preference for their own chats; a non-owner dashboard identity -- an
+    # allow-listed messaging identity holds a dashboard credential whose subject is
+    # not the owner and whose `app` claim is EMPTY, so `not request_app` alone admits
+    # it -- would otherwise inherit the owner's auto-approve grant simply by opening
+    # a chat. Deny-by-default on a positive owner assertion, and a non-owner keeps
+    # today's behaviour: the interactive floor.
+    _owner_request = _is_owner_dashboard_request(request)
+    # Initialised unconditionally so the name is bound on EVERY path. The apply
+    # condition below short-circuits before reading it when a gate fails, but
+    # relying on conjunct order for name binding is a trap for the next edit --
+    # and "normal" is the fail-safe value regardless: the interactive floor.
+    _default_approval_mode = "normal"
+    # No `is_new_slot` conjunct here: newness is not known until the check below,
+    # which is the whole point of the hoist. The principal gates still apply, so an
+    # app token, a remote-bound create and a non-owner still never read a tier --
+    # and the apply site below re-states every condition including newness.
+    if not request_app and not instance_id and _owner_request and _mode in _TIER_INHERITING_MODES:
+        try:
+            _default_approval_mode = (
+                await asyncio.to_thread(KiroCrewConfig.load)
+            ).agent.default_approval_mode
+        except Exception:
+            logger.warning(
+                "Reading agent.default_approval_mode failed; new session starts on "
+                "the interactive floor",
+                exc_info=True,
+            )
+            _default_approval_mode = "normal"
+
     is_new_slot = not _requested_key or _requested_key not in state._slots
 
     # Coalesce every push inside into ONE broadcast at exit, so the first frame
@@ -2557,6 +2696,106 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
             )
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=409)
+        # Why a configured default may be declined, named for the log below. The
+        # feature exists to remove a per-chat click; a guard that puts that click back
+        # SILENTLY means the user pays it with no way to find out why. Each refusal is
+        # now attributable to one named guard.
+        _tier_refusals = []
+        if _default_approval_mode != "normal":
+            if not is_new_slot:
+                _tier_refusals.append("not_a_new_session")
+            if request_app:
+                _tier_refusals.append("app_token_caller")
+            if instance_id:
+                _tier_refusals.append("session_bound_to_remote_crew")
+            if not _owner_request:
+                _tier_refusals.append("caller_is_not_the_owner")
+            if slot._app:
+                _tier_refusals.append("slot_owned_by_an_app")
+            if _mode not in _TIER_INHERITING_MODES:
+                _tier_refusals.append(f"app_worker_mode:{_mode}")
+            if _default_approval_mode not in _DEFAULT_APPROVAL_MODES:
+                _tier_refusals.append(f"tier_not_persistable:{_default_approval_mode}")
+        if _tier_refusals:
+            logger.info(
+                "agent.default_approval_mode=%s not applied to %s: %s",
+                _default_approval_mode,
+                slot.key,
+                ", ".join(_tier_refusals),
+            )
+        if (
+            is_new_slot
+            # Restated here rather than relying on `_default_approval_mode` still
+            # holding "normal": this is the line that grants authority, so the
+            # principal check belongs where a reader looks for it.
+            and not request_app
+            and not instance_id
+            # Restated with the other principal checks: this is the line that grants
+            # authority, so a reader finds every precondition here.
+            and _owner_request
+            # The slot's OWN ownership tag, not a re-derived boolean: if a concurrent
+            # app-token create won the key, `get_or_create_slot` handed back ITS slot
+            # and this stamps `_app`. Checking the object is what survives any future
+            # await being added above.
+            and not slot._app
+            # See _TIER_INHERITING_MODES: an app-worker slot is not on the sidebar,
+            # so no user is watching it and a standing grant there runs tools
+            # unattended. Design Critique's dc-* worker is created by the owner's own
+            # page (same-origin, no app token, empty app tag), so every other gate
+            # here passes it -- this is the one that does not.
+            and _mode in _TIER_INHERITING_MODES
+            # Only the tiers that actually grant something. `normal` writes nothing,
+            # and auditing a no-op would put noise in the SEL record.
+            #
+            # Tested against `_DEFAULT_APPROVAL_MODES` -- the PERSISTABLE set -- NOT
+            # `_SLOT_SCOPED_TRUST_MODES`, which is the per-chat vocabulary and still
+            # contains `trust`. Testing against that tuple would argue from a premise
+            # this revision invalidated: it would admit a `trust` this path can no
+            # longer honour, and would quietly widen again if the tuple ever grew.
+            and _default_approval_mode in _DEFAULT_APPROVAL_MODES
+            and _default_approval_mode != "normal"
+        ):
+            # Inside the suspend window on purpose: the block exists so the first
+            # frame a client sees already carries every post-create correction,
+            # and the footer picker renders its tier from the slot's own
+            # `trust`/`trust_reads` (slot_projection.py emits both; ChatPage's
+            # `displayMode` reads them), so applying it here is what stops the
+            # session rendering as Normal for a frame before it corrects.
+            #
+            # Audited because this is an auto-approve grant that no one clicked.
+            # A distinct operation name keeps it separable in the SEL record from
+            # an operator's explicit pick via api_chat_mode -- the grants have
+            # identical effect but different provenance, and provenance is the
+            # thing an auditor cannot reconstruct afterwards.
+            # AUDIT BEFORE THE GRANT, and refuse the grant if it cannot be
+            # recorded. An unattended auto-approve grant whose audit entry is lost is
+            # exactly the case an auditor cannot reconstruct afterwards, and the loss
+            # is permanent. Falling back to the interactive floor is the fail-safe
+            # direction -- it asks for MORE approvals -- and matches how this feature
+            # already treats an unreadable config.
+            #
+            # `api_chat_mode` swallows the same failure for the equivalent explicit
+            # click. That parity is not a reason to swallow it here: a click has a
+            # human witness and this grant has none. Deliberately stricter.
+            #
+            # Kept synchronous rather than moved off-loop: an await here would sit
+            # inside `suspend_slots_push()`, and removing an await from this region is
+            # precisely what closed the stale-verdict race above.
+            try:
+                sel().log_api_access(
+                    caller="dashboard:slot_create",
+                    operation=f"session_default_approval_mode:{_default_approval_mode}",
+                    outcome="enabled",
+                    resources=slot.key,
+                )
+            except Exception:
+                logger.warning(
+                    "SEL audit failed for default approval mode on session create; "
+                    "refusing the grant, so the session starts on the interactive floor",
+                    exc_info=True,
+                )
+            else:
+                _apply_default_approval_mode(state, slot, _default_approval_mode)
         if remote_slot_key and not is_new_slot:
             # The name was free when the binding gates ran, but `create_peer_slot`
             # awaits the peer and a concurrent create took it inside that window,

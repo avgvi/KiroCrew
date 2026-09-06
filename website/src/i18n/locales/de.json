@@ -13118,7 +13118,14 @@
         "distribution_error_misconfigured_detail": "Die zentrale Richtliniendeklaration auf diesem Host konnte nicht gelesen werden, daher wird keine Obergrenze abgerufen.",
         "distribution_refresh_rejected_detail": "Die letzte Richtlinienaktualisierung wurde von der Quelle abgelehnt.",
         "distribution_refresh_unreachable_detail": "Die letzte Richtlinienaktualisierung konnte die Quelle nicht erreichen.",
-        "denied_commands_load_failed": "Die Regeln für gesperrte Befehle konnten nicht geladen werden. Die Listen unten sind leer, weil das Lesen fehlgeschlagen ist, nicht weil es keine Regeln gibt."
+        "denied_commands_load_failed": "Die Regeln für gesperrte Befehle konnten nicht geladen werden. Die Listen unten sind leer, weil das Lesen fehlgeschlagen ist, nicht weil es keine Regeln gibt.",
+        "default_approval_mode_title": "Standard-Freigabemodus für neue Chats",
+        "default_approval_mode_desc": "Der Freigabemodus, in dem ein neuer Chat startet. Bereits geöffnete Chats werden nicht geändert, und jeder Chat kann weiterhin über die Auswahl in seinem Nachrichtenfeld geändert werden.",
+        "default_approval_mode_save_failed": "Speichern fehlgeschlagen. Neue Chats starten weiterhin mit der Einstellung von vor dem Klick.",
+        "default_approval_mode_load_failed": "Diese Einstellung konnte nicht gelesen werden, daher ist nichts als ausgewaehlt markiert. Was neue Chats tatsaechlich verwenden, hat sich nicht geaendert. Neu laden, um es zu sehen.",
+        "new_chat_defaults_section": "Standard fuer neue Chats",
+        "default_approval_mode_trust_note": "Trust wird hier nicht angeboten. Es fuehrt Tools ohne Rueckfrage aus und bleibt daher eine Entscheidung pro Chat im Nachrichtenfeld.",
+        "default_approval_mode_overridden": "Dein gespeicherter Wert {{value}} wird hier nicht angewendet; neue Chats starten mit Normal."
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "Wechsel zwischen Chat-Tabs an Strg+Zahl statt Option+Zahl binden",

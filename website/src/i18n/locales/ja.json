@@ -12946,7 +12946,14 @@
         "distribution_error_misconfigured_detail": "このホストの中央ポリシー宣言を解析できなかったため、上限は取得されていません。",
         "distribution_refresh_rejected_detail": "前回のポリシー更新はソースにより拒否されました。",
         "distribution_refresh_unreachable_detail": "前回のポリシー更新はソースに到達できませんでした。",
-        "denied_commands_load_failed": "拒否コマンドのルールを読み込めませんでした。下の一覧が空なのは読み取りに失敗したためで、ルールが存在しないからではありません。"
+        "denied_commands_load_failed": "拒否コマンドのルールを読み込めませんでした。下の一覧が空なのは読み取りに失敗したためで、ルールが存在しないからではありません。",
+        "default_approval_mode_title": "新しいチャットの既定の承認モード",
+        "default_approval_mode_desc": "新しいチャットが開始される承認モードです。すでに開いているチャットは変更されません。各チャットのモードはメッセージ入力欄のピッカーから変更できます。",
+        "default_approval_mode_save_failed": "保存できませんでした。新しいチャットはクリック前の設定のままです。",
+        "default_approval_mode_load_failed": "この設定を読み取れなかったため、選択状態は表示されていません。新しいチャットが実際に使う設定は変わっていません。再読み込みして確認してください。",
+        "new_chat_defaults_section": "新しいチャットの既定値",
+        "default_approval_mode_trust_note": "Trust はここでは選べません。確認せずにツールを実行するため、メッセージ欄でチャットごとに選ぶ設定のままにしています。",
+        "default_approval_mode_overridden": "保存された値 {{value}} はここでは適用されないため、新しいチャットは Normal で始まります。"
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "チャットタブの切り替えを Option+digit ではなく Ctrl+digit にバインドします",

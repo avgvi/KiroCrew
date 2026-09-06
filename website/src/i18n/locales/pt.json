@@ -13290,7 +13290,14 @@
         "distribution_error_misconfigured_detail": "A declaração de política central neste host não pôde ser interpretada, então nenhum limite está sendo obtido.",
         "distribution_refresh_rejected_detail": "A última atualização da política foi rejeitada pela origem.",
         "distribution_refresh_unreachable_detail": "A última atualização da política não conseguiu alcançar a origem.",
-        "denied_commands_load_failed": "Não foi possível carregar as regras de comandos negados. As listas abaixo estão vazias porque a leitura falhou, não porque não há regras."
+        "denied_commands_load_failed": "Não foi possível carregar as regras de comandos negados. As listas abaixo estão vazias porque a leitura falhou, não porque não há regras.",
+        "default_approval_mode_title": "Modo de aprovação padrão para novos chats",
+        "default_approval_mode_desc": "O modo de aprovação com que um novo chat começa. Os chats já abertos não mudam, e qualquer chat ainda pode ser alterado pelo seletor na sua caixa de mensagem.",
+        "default_approval_mode_save_failed": "Nao foi possivel salvar. Novos chats continuam comecando com a configuracao anterior.",
+        "default_approval_mode_load_failed": "Nao foi possivel ler esta configuracao, portanto nada aparece selecionado. O que os novos chats realmente usam nao mudou. Recarregue para ver.",
+        "new_chat_defaults_section": "Padroes para novos chats",
+        "default_approval_mode_trust_note": "Trust nao e oferecido aqui. Executa ferramentas sem perguntar, portanto continua sendo uma escolha por chat na caixa de mensagem.",
+        "default_approval_mode_overridden": "O valor salvo {{value}} nao e aplicado aqui, portanto novos chats comecam em Normal."
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "Vincular a alternância de abas de chat a Ctrl+dígito em vez de Option+dígito",

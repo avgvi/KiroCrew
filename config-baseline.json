@@ -38,6 +38,7 @@
         "jail": "auto",
         "dangerously_skip_permissions": false,
         "yolo_duration": "6h",
+        "default_approval_mode": "normal",
         "notify_override_expiry": true,
         "bot_name": "",
         "conductor_skill": false,
@@ -510,6 +511,23 @@
         "until_shutdown"
       ],
       "defaultValue": "6h"
+    },
+    {
+      "path": "agent.default_approval_mode",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Default Approval Mode for New Sessions",
+      "help": "Which approval tier a NEWLY CREATED chat session starts in. A workflow that always runs at Reads otherwise has to re-pick it in the chat footer for every new session. Accepts normal (ask for each tool) or trust_reads (auto-approve read-only commands). Unset means normal, which is the behaviour today, so setting nothing changes nothing. Applies ONLY at session creation -- a session already open is never re-tiered by this. Trust and auto-approve (YOLO) are deliberately NOT persistable: both grant unattended tool auto-approve, so storing either would let one trusted session raise the floor for every future one. Both remain available per-chat from the footer picker.",
+      "hasChildren": false,
+      "enumValues": [
+        "normal",
+        "trust_reads"
+      ],
+      "defaultValue": "normal"
     },
     {
       "path": "agent.notify_override_expiry",

@@ -13290,7 +13290,14 @@
         "distribution_error_misconfigured_detail": "La dichiarazione della policy centrale su questo host non può essere interpretata, quindi non viene recuperato alcun limite.",
         "distribution_refresh_rejected_detail": "L'ultimo aggiornamento della policy è stato rifiutato dall'origine.",
         "distribution_refresh_unreachable_detail": "L'ultimo aggiornamento della policy non ha raggiunto l'origine.",
-        "denied_commands_load_failed": "Impossibile caricare le regole dei comandi negati. Gli elenchi sotto sono vuoti perché la lettura non è riuscita, non perché non ci siano regole."
+        "denied_commands_load_failed": "Impossibile caricare le regole dei comandi negati. Gli elenchi sotto sono vuoti perché la lettura non è riuscita, non perché non ci siano regole.",
+        "default_approval_mode_title": "Modalità di approvazione predefinita per le nuove chat",
+        "default_approval_mode_desc": "La modalità di approvazione con cui inizia una nuova chat. Le chat già aperte non cambiano e ogni chat può ancora essere modificata dal selettore nella sua casella di messaggio.",
+        "default_approval_mode_save_failed": "Salvataggio non riuscito. Le nuove chat iniziano ancora con l'impostazione precedente.",
+        "default_approval_mode_load_failed": "Non e stato possibile leggere questa impostazione, quindi non risulta nulla selezionato. Cio che usano davvero le nuove chat non e cambiato. Ricarica per vederlo.",
+        "new_chat_defaults_section": "Impostazioni predefinite per le nuove chat",
+        "default_approval_mode_trust_note": "Trust non e disponibile qui. Esegue strumenti senza chiedere, quindi resta una scelta per singola chat nel campo del messaggio.",
+        "default_approval_mode_overridden": "Il valore salvato {{value}} non viene applicato qui, quindi le nuove chat iniziano con Normal."
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "Associa il cambio di scheda chat a Ctrl+cifra invece di Option+cifra",

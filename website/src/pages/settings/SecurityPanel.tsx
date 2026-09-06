@@ -746,7 +746,7 @@ function GovernanceRow({ row }: { row: GovernanceScope }) {
 /** Read-only viewer: the effective governance ceiling across every scope. */
 /* ── Ad-hoc auto-approve duration ── */
 
-interface KirocrewCfgShape { agent?: { yolo_duration?: string; apps_allow_third_party?: unknown } }
+interface KirocrewCfgShape { agent?: { yolo_duration?: string; default_approval_mode?: string; apps_allow_third_party?: unknown } }
 
 const YOLO_DURATION_KEYS = ['30m', '1h', '6h', '12h', '24h', 'until_shutdown'] as const
 type YoloDurationKey = (typeof YOLO_DURATION_KEYS)[number]
@@ -844,6 +844,165 @@ function YoloDurationCard() {
       )}
       {save.isError && (
         <ErrorNotice variant="inline" className="mt-1.5" message={i18nT('pages.settings.securityPanel.failed_to_save_yolo_duration')} askAgent />
+      )}
+    </SettingsCard>
+  )
+}
+
+/* ── Default approval mode for new chats ── */
+
+/** Tiers a NEW chat may be defaulted to, in the order the picker declares them
+ *  (`APPROVAL_SEGMENTS` in components/ApprovalModePicker.tsx) with `yolo` removed.
+ *  Mirrors the backend enum for `agent.default_approval_mode`, and the backend
+ *  normalizes anything outside it to `normal`, so a value absent here cannot take
+ *  effect even if it is hand-written into the config file.
+ *
+ *  `yolo` is absent for a MECHANICAL reason, not a policy one: it is a
+ *  process-global grant with its own duration (see YoloDurationCard above), so
+ *  "the tier a new chat starts on" cannot express it. */
+// `trust` is deliberately ABSENT from the PERSISTABLE set: it is the only tier that
+// also writes the session approval policy "auto" (unattended tool auto-approve,
+// inherited by spawned subagents), and config.json is agent-writable -- so a
+// persistable `trust` would let one already-trusted session raise the floor for
+// every future one. The per-chat footer picker still offers it; only persisting is
+// refused. The backend enum is the source of truth (config/sections.py).
+const DEFAULT_APPROVAL_MODE_KEYS = ['normal', 'trust_reads'] as const
+type DefaultApprovalModeKey = (typeof DEFAULT_APPROVAL_MODE_KEYS)[number]
+
+/** Which approval tier a NEWLY CREATED chat starts on (`agent.default_approval_mode`).
+ *
+ *  Copied from `YoloDurationCard` above: same SettingsCard shell, same radiogroup
+ *  with the `data-setting-label` deep-link anchor, the same
+ *  `api.kirocrewConfig` read / `api.patchConfig` write pair keyed on the
+ *  `kirocrewConfig` query, and the same pair of inline ErrorNotices.
+ *
+ *  Option labels REUSE the picker's own strings so the two surfaces cannot drift
+ *  into two names for one tier. Note the spelling split that preserves: the
+ *  declared KEY is `trust_reads` while its label key is `reads_label` — code uses
+ *  the key, the UI shows the existing label, and no second spelling is added.
+ *
+ *  Chats already open are untouched. The backend applies this only to a freshly
+ *  minted slot, so moving this control never re-tiers a live chat; the per-chat
+ *  footer picker remains the only way to change one. */
+function DefaultApprovalModeCard() {
+  const qc = useQueryClient()
+  const { data, isError: cfgError } = useQuery<KirocrewCfgShape>({ queryKey: ['kirocrewConfig'], queryFn: api.kirocrewConfig })
+  const configured = data?.agent?.default_approval_mode
+  // Unset — or set to anything unrecognised — reads as `normal`, which IS the
+  // behaviour today, so the control shows the EFFECTIVE value rather than an
+  // aspirational one. `cfgError` below is what keeps that honest when the read
+  // failed rather than the value genuinely being absent.
+  // `null` on a failed read, so NOTHING renders as selected. A green tick beside
+  // copy that says "the highlighted option is the default, not what is stored" is
+  // a self-contradicting frame; no tick plus the notice is honest.
+  const current: DefaultApprovalModeKey | null = cfgError
+    ? null
+    : DEFAULT_APPROVAL_MODE_KEYS.find(k => k === configured) ?? 'normal'
+  // A stored value that is not persistable (`trust`, `yolo`, junk) is clamped to
+  // `normal` on read. SILENTLY is the problem: whoever wrote it sees Normal ticked
+  // with no cue it was overridden -- the unset and stored-trust frames were pixel
+  // identical. Naming it closes that.
+  const overridden =
+    typeof configured === 'string' &&
+    configured.trim() !== '' &&
+    !DEFAULT_APPROVAL_MODE_KEYS.some(k => k === configured)
+  const save = useMutation({
+    mutationFn: (v: string) => api.patchConfig('agent.default_approval_mode', v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
+  })
+
+  /** Labels for the PERSISTABLE tiers only.
+   *
+   *  There is no `trust` case: `DefaultApprovalModeKey` is the persistable set, so a
+   *  `trust` branch here is unreachable and the compiler says so (TS2678). That is
+   *  narrowness in THIS control, not a capability change -- `ApprovalModeKey` (from
+   *  `APPROVAL_SEGMENTS`) is a separate type, the footer picker still offers Trust,
+   *  and nothing in this file is on that path. */
+  function optionLabel(k: DefaultApprovalModeKey): string {
+    switch (k) {
+      case 'trust_reads': return i18nT('components.approvalModePicker.reads_label')
+      default: return i18nT('components.approvalModePicker.normal_label')
+    }
+  }
+
+  /** What the tier PERMITS. The label alone is one bare word ("Trust"), which is
+   *  not enough to choose on -- and choosing is this control's whole purpose.
+   *
+   *  `normal` and `reads` reuse the footer picker's approved descriptions verbatim:
+   *  both are already scope-free ("... checks with you before doing anything"), so
+   *  they read correctly here and need no new translation. Only trust's picker
+   *  string is scoped to a single chat ("In this chat, ..."), which is wrong on a
+   *  row about NEW chats, so that one has its own key -- derived in each locale
+   *  from that locale's own approved trust_desc. */
+  function optionDesc(k: DefaultApprovalModeKey): string {
+    switch (k) {
+      case 'trust_reads': return i18nT('components.approvalModePicker.reads_desc')
+      default: return i18nT('components.approvalModePicker.normal_desc')
+    }
+  }
+
+  const title = i18nT('pages.settings.securityPanel.default_approval_mode_title')
+  return (
+    <SettingsCard>
+      <div className="text-[13px] font-semibold text-text">{title}</div>
+      <div className="text-[12px] text-muted mt-0.5 mb-2 leading-relaxed">{i18nT('pages.settings.securityPanel.default_approval_mode_desc')}</div>
+      {/* data-setting-label: deep-link anchor for the manual registry entry
+          (settingsManual.ts) — the highlight hook queries the rendered label. */}
+      <div className="flex flex-col gap-1.5" role="radiogroup" aria-label={title} data-setting-label={title}>
+        {DEFAULT_APPROVAL_MODE_KEYS.map(k => {
+          const selected = current === k
+          return (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              // The DECLARED key, not the label. Without it the DOM carries only
+              // localized copy, and `optionLabel` falls through to the Normal
+              // label for anything it has no case for -- so a tier wrongly added
+              // to the list above would render as "Normal" and a label-based
+              // assertion could not see it. Measured: adding `yolo` reddened the
+              // order test and left a label-based no-YOLO assertion GREEN.
+              //
+              // Named `data-approval-mode` rather than `data-mode` on purpose:
+              // `data-mode` is already the THEME attribute (useTheme.tsx sets it
+              // on <html>, TerminalCompletion.tsx uses it too), so the shorter
+              // name would collide with an existing meaning.
+              data-approval-mode={k}
+              disabled={save.isPending}
+              onClick={() => { if (!selected) save.mutate(k) }}
+              className={`flex items-start gap-2.5 text-left rounded-md border px-3 py-2 transition-colors bg-transparent cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 ${selected ? 'border-accent bg-accent-subtle' : 'border-border hover:bg-bg-hover'}`}
+            >
+              <span className="shrink-0 mt-0.5">
+                {selected ? <CheckCircle2 size={14} className="text-accent" /> : <Circle size={14} className="text-muted" />}
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[12px] text-text">{optionLabel(k)}</span>
+                {/* The label alone does not say what the tier PERMITS. */}
+                <span className="block text-[11px] text-muted mt-0.5 leading-snug">{optionDesc(k)}</span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      {/* Picker-only card, nothing to lose on either: a read failure means the
+          highlighted option is the `normal` default rather than what is stored,
+          and a save failure means the click did not persist. */}
+      {overridden && !cfgError && (
+        <div className="text-[11px] text-warn mt-2 leading-relaxed">
+          {i18nT('pages.settings.securityPanel.default_approval_mode_overridden', { value: String(configured) })}
+        </div>
+      )}
+      {/* The users who asked for this (#8418) will look for Trust and not find it.
+          Saying why on the surface is what stops that reading as a bug. */}
+      <div className="text-[11px] text-muted mt-2 leading-relaxed">
+        {i18nT('pages.settings.securityPanel.default_approval_mode_trust_note')}
+      </div>
+      {cfgError && (
+        <ErrorNotice variant="inline" className="mt-1.5" message={i18nT('pages.settings.securityPanel.default_approval_mode_load_failed')} askAgent />
+      )}
+      {save.isError && (
+        <ErrorNotice variant="inline" className="mt-1.5" message={i18nT('pages.settings.securityPanel.default_approval_mode_save_failed')} askAgent />
       )}
     </SettingsCard>
   )
@@ -2578,9 +2737,18 @@ export function SecurityPanel({ basePath }: { basePath?: string } = {}) {
           <>
             {key === 'posture' && <PostureSection />}
             {key === 'approval' && (
-              <SettingsSection title={i18nT('pages.settings.securityPanel.yolo_auto_approve')}>
-                <YoloDurationCard />
-              </SettingsSection>
+                // Two sections, not one. The default-mode card is NOT a YOLO setting --
+                // it pointedly excludes YOLO -- so filing it under "YOLO (auto-approve)"
+                // both hid it from anyone scanning for a new-chat default and implied it
+                // grants auto-approve.
+                <>
+                <SettingsSection title={i18nT('pages.settings.securityPanel.yolo_auto_approve')}>
+                  <YoloDurationCard />
+                </SettingsSection>
+                <SettingsSection title={i18nT('pages.settings.securityPanel.new_chat_defaults_section')}>
+                  <DefaultApprovalModeCard />
+                </SettingsSection>
+                </>
             )}
             {key === 'rules' && <DeniedCommandsSection draft={denyDraft} onDraftChange={setDenyDraft} noteDraft={denyNoteDraft} onNoteDraftChange={setDenyNoteDraft} />}
             {key === 'tailnet' && (

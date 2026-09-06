@@ -13291,7 +13291,14 @@
         "distribution_error_misconfigured_detail": "La déclaration de politique centrale sur cet hôte n'a pas pu être analysée ; aucun plafond n'est donc récupéré.",
         "distribution_refresh_rejected_detail": "La dernière actualisation de la politique a été rejetée par la source.",
         "distribution_refresh_unreachable_detail": "La dernière actualisation de la politique n'a pas pu joindre la source.",
-        "denied_commands_load_failed": "Impossible de charger les règles de commandes refusées. Les listes ci-dessous sont vides parce que la lecture a échoué, pas parce qu'il n'y a aucune règle."
+        "denied_commands_load_failed": "Impossible de charger les règles de commandes refusées. Les listes ci-dessous sont vides parce que la lecture a échoué, pas parce qu'il n'y a aucune règle.",
+        "default_approval_mode_title": "Mode d’approbation par défaut pour les nouveaux chats",
+        "default_approval_mode_desc": "Le mode d’approbation avec lequel démarre un nouveau chat. Les chats déjà ouverts ne changent pas, et chaque chat peut toujours être modifié depuis le sélecteur de sa zone de message.",
+        "default_approval_mode_save_failed": "Echec de l'enregistrement. Les nouveaux chats demarrent toujours avec le reglage precedent.",
+        "default_approval_mode_load_failed": "Impossible de lire ce reglage, donc rien n'apparait comme selectionne. Ce que les nouveaux chats utilisent reellement n'a pas change. Rechargez pour le voir.",
+        "new_chat_defaults_section": "Valeurs par defaut des nouveaux chats",
+        "default_approval_mode_trust_note": "Trust n'est pas propose ici. Il execute des outils sans demander, et reste donc un choix par chat dans la zone de message.",
+        "default_approval_mode_overridden": "La valeur enregistree {{value}} n'est pas appliquee ici, donc les nouveaux chats demarrent sur Normal."
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "Associer le changement d'onglet de chat à Ctrl+chiffre au lieu de Option+chiffre",

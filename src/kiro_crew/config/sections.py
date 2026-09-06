@@ -994,6 +994,23 @@ class AgentConfig:
             enum=["30m", "1h", "6h", "12h", "24h", "until_shutdown"],
         ),
     )
+    default_approval_mode: str = field(
+        default="normal",
+        metadata=_meta(
+            "Default Approval Mode for New Sessions",
+            "Which approval tier a NEWLY CREATED chat session starts in. A workflow "
+            "that always runs at Reads otherwise has to re-pick it in the chat "
+            "footer for every new session. Accepts normal (ask for each tool) or "
+            "trust_reads (auto-approve read-only commands). Unset means normal, "
+            "which is the behaviour today, so setting nothing changes nothing. "
+            "Applies ONLY at session creation -- a session already open is never "
+            "re-tiered by this. Trust and auto-approve (YOLO) are deliberately NOT "
+            "persistable: both grant unattended tool auto-approve, so storing "
+            "either would let one trusted session raise the floor for every future "
+            "one. Both remain available per-chat from the footer picker.",
+            enum=["normal", "trust_reads"],
+        ),
+    )
     notify_override_expiry: bool = field(
         default=True,
         metadata=_meta(
@@ -3881,6 +3898,39 @@ _YOLO_DURATION_SECS: dict[str, int] = {
     "24h": 86400,
 }
 _YOLO_DURATION_DEFAULT = "6h"
+# Approval tiers a NEW session may be defaulted to, in the order the dashboard
+# picker declares them (``APPROVAL_SEGMENTS`` in
+# ``website/src/components/ApprovalModePicker.tsx``) with ``yolo`` removed.
+#
+# ``yolo`` is excluded MECHANICALLY, not as a taste call: it is not a per-session
+# property at all. ``api_chat_mode`` states that "``yolo`` is global and ignores
+# ``slot`` entirely" -- selecting it arms the process-global SafetyOverride with
+# its own duration and expiry (``agent.yolo_duration``), so "the tier a new
+# session starts in" cannot express it.
+#
+# The TWO that remain are a strict SUBSET of the modes the ``approval_modes``
+# governance scope declares ``always_permitted`` (``SCOPE_CATALOG`` in
+# ``kiro_crew/platform/governance.py``) -- the modes an admin policy may never
+# forbid. That is what makes this setting unable to escape a ceiling: it cannot
+# name the only deniable mode, so there is nothing for it to be clamped against.
+# It is a SUBSET rather than an exact match because ``trust`` is excluded for a
+# second and stricter reason than governance -- see the note above.
+# ``test/test_default_approval_mode.py`` pins that correspondence, so if a tier
+# ever becomes deniable the test fails rather than this list silently widening.
+# PERSISTABLE tiers. `trust` is deliberately ABSENT, and this is a security boundary
+# rather than a scope decision: `trust` is the only tier that also writes the session
+# `approval_policy` "auto" (see `_apply_default_approval_mode`), which is unattended
+# tool auto-approve and which `parent_trusted` extends to spawned subagents.
+# `config.json` is agent-writable (`agent.py` calls it LLM-writable) and, although
+# `is_sensitive_write_path` returns True for it, that write is auto-approved inside a
+# session that is ALREADY trusted -- so a persistable `trust` would let one session's
+# trust become standing trust for every future session. Leaving `trust` unpersistable
+# removes that mechanism rather than discouraging it: the value cannot be stored, and
+# `_normalize_default_approval_mode` sends a hand-edited one back to the floor.
+#
+# The per-chat footer picker still offers `trust`; only PERSISTING it is refused.
+_DEFAULT_APPROVAL_MODES: tuple[str, ...] = ("normal", "trust_reads")
+_DEFAULT_APPROVAL_MODE = "normal"
 # Not a timed value: an ad-hoc grant that stays on with no expiry until the
 # gateway process stops. In-memory only, so it cannot survive a restart.
 YOLO_UNTIL_SHUTDOWN = "until_shutdown"
@@ -3919,6 +3969,24 @@ def _read_skip_permissions(agent_data: dict) -> bool:
                 value,
             )
     return False
+
+
+def _normalize_default_approval_mode(value: object) -> str:
+    """Coerce ``agent.default_approval_mode`` to a selectable session default.
+
+    Anything unrecognised -- a typo, a removed tier, the wrong type, or ``yolo``
+    (process-global rather than per-session) -- falls back to ``normal`` rather
+    than failing the whole config load, matching ``_normalize_yolo_duration``.
+
+    Note which direction that fallback runs: ``normal`` is the INTERACTIVE floor,
+    so an unreadable or hostile value can only ever ask for MORE approval
+    prompts, never fewer. A config file that says ``yolo`` does not get one.
+    """
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in _DEFAULT_APPROVAL_MODES:
+            return v
+    return _DEFAULT_APPROVAL_MODE
 
 
 def _normalize_yolo_duration(value: object) -> str:

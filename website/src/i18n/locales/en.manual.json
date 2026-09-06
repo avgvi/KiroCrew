@@ -5325,7 +5325,14 @@
         "distribution_error_misconfigured_detail": "The central policy declaration on this host could not be parsed, so no ceiling is being fetched.",
         "distribution_refresh_rejected_detail": "The last policy refresh was rejected by the source.",
         "distribution_refresh_unreachable_detail": "The last policy refresh could not reach the source.",
-        "denied_commands_load_failed": "Could not load the denied-command rules. The lists below are empty because the read failed, not because there are no rules."
+        "denied_commands_load_failed": "Could not load the denied-command rules. The lists below are empty because the read failed, not because there are no rules.",
+        "default_approval_mode_title": "Default approval mode for new chats",
+        "default_approval_mode_desc": "The approval mode a new chat starts in. Chats that are already open are not changed, and any chat can still be changed from the picker in its message box.",
+        "default_approval_mode_save_failed": "Could not save. New chats still start on the setting shown before your click.",
+        "default_approval_mode_load_failed": "Could not read this setting, so nothing is shown as selected. What new chats actually use has not changed. Reload to see it.",
+        "new_chat_defaults_section": "New chat defaults",
+        "default_approval_mode_trust_note": "Trust is not offered here. It runs tools without asking, so it stays a per-chat choice made in the message box.",
+        "default_approval_mode_overridden": "Your stored value of {{value}} is not applied here, so new chats start on Normal."
       },
       "skillsPanel": {
         "failed_to_save_skills_setting": "Failed to save skills setting",

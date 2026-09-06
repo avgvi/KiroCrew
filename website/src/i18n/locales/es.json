@@ -13291,7 +13291,14 @@
         "distribution_error_misconfigured_detail": "No se pudo interpretar la declaración de política central de este host, así que no se está obteniendo ningún límite.",
         "distribution_refresh_rejected_detail": "La fuente rechazó la última actualización de la política.",
         "distribution_refresh_unreachable_detail": "La última actualización de la política no pudo conectar con la fuente.",
-        "denied_commands_load_failed": "No se pudieron cargar las reglas de comandos denegados. Las listas de abajo están vacías porque falló la lectura, no porque no haya reglas."
+        "denied_commands_load_failed": "No se pudieron cargar las reglas de comandos denegados. Las listas de abajo están vacías porque falló la lectura, no porque no haya reglas.",
+        "default_approval_mode_title": "Modo de aprobación predeterminado para los chats nuevos",
+        "default_approval_mode_desc": "El modo de aprobación con el que empieza un chat nuevo. Los chats ya abiertos no cambian, y cualquier chat se puede cambiar desde el selector de su cuadro de mensaje.",
+        "default_approval_mode_save_failed": "No se pudo guardar. Los chats nuevos siguen empezando con el ajuste anterior a tu clic.",
+        "default_approval_mode_load_failed": "No se pudo leer este ajuste, por lo que no se muestra nada seleccionado. Lo que usan realmente los chats nuevos no ha cambiado. Vuelve a cargar para verlo.",
+        "new_chat_defaults_section": "Valores por defecto de los chats nuevos",
+        "default_approval_mode_trust_note": "Trust no se ofrece aqui. Ejecuta herramientas sin preguntar, por lo que sigue siendo una eleccion por chat en el cuadro de mensaje.",
+        "default_approval_mode_overridden": "El valor guardado {{value}} no se aplica aqui, por lo que los chats nuevos empiezan en Normal."
       },
       "shortcutsPanel": {
         "bind_chat_tab_switching_to_ctrl_digit_instead_of": "Asignar el cambio de pestaña de chat a Ctrl+dígito en lugar de Option+dígito",
