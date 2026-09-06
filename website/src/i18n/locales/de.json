@@ -9084,7 +9084,13 @@
       },
       "errorCard": {
         "continue": "Fortsetzen",
-        "continue_hint": "Ab der Unterbrechung fortsetzen. Bereits auf die Festplatte geschriebene Arbeit bleibt unberührt."
+        "continue_hint": "Ab der Unterbrechung fortsetzen. Bereits auf die Festplatte geschriebene Arbeit bleibt unberührt.",
+        "default_model": "Standardmodell ändern",
+        "default_model_hint": "Einstellungen → Chat → Standardmodell öffnen. Neue Sitzungen starten mit diesem Wert.",
+        "pick_model": "Modell für diese Sitzung wählen",
+        "pick_model_hint": "Die Modellauswahl öffnen und eines der Modelle wählen, die dein Konto nutzen kann.",
+        "both_hint": "Beides tun: Das erste behebt diese Sitzung, das zweite verhindert, dass neue Sitzungen mit demselben Modell starten.",
+        "elsewhere_hint": "Die Modellauswahl und Einstellungen → Chat sind im Haupt-Chatfenster. Dort erledigen."
       },
       "folderPanel": {
         "clear_search": "Suche löschen",

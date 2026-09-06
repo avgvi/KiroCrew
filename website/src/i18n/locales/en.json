@@ -6014,7 +6014,13 @@
       },
       "errorCard": {
         "continue": "Continue",
-        "continue_hint": "Resume from where it stopped. Work already written to disk is untouched."
+        "continue_hint": "Resume from where it stopped. Work already written to disk is untouched.",
+        "default_model": "Change default model",
+        "default_model_hint": "Open Settings → Chat → Default Model. New sessions start on this value.",
+        "pick_model": "Choose a model for this session",
+        "pick_model_hint": "Open the model picker and choose one of the models your account can use.",
+        "both_hint": "Do both: the first fixes this session, the second stops new sessions from starting on the same model.",
+        "elsewhere_hint": "The model picker and Settings → Chat are in the main chat window. Open it to do this."
       },
       "knowledgePicker": {
         "cancel": "Cancel",

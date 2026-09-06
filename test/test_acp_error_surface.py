@@ -362,6 +362,68 @@ class TestTransientMarkerCoupling:
         assert "does not have access" in formatted
         assert not is_transient_backend_error(formatted)
 
+    def test_rejected_auto_sentinel_does_not_recommend_auto(self):
+        """A partition that does not serve ``auto`` must not be told to set it.
+
+        The generic wording ends with "set agent.model to 'auto'"; when the
+        rejected id IS ``auto`` that advice sends the user in a circle. The
+        message has to route them to the picker AND the default-model setting,
+        and must never suggest the value that just failed.
+        """
+        from kiro_crew.acp.client import _format_acp_error
+
+        error = dict(
+            _MODEL_UNAVAILABLE, data=_MODEL_UNAVAILABLE["data"].replace("claude-opus-4.8", "auto")
+        )
+        served = ["gpt-5.6-sol", "deepseek-3.2", "glm-5"]
+        formatted = _format_acp_error(error, served)
+        assert "does not have access to model 'auto'" in formatted
+        # State only what the served list proves: on this account. A regional
+        # partition and a plan/tier exclusion produce identical evidence.
+        assert "not available on your account" in formatted
+        assert "region" not in formatted
+        assert "set agent.model to 'auto'" not in formatted
+        assert "Settings → Chat" in formatted
+        assert "model picker" in formatted
+        for m in served:
+            assert m in formatted
+        assert "Retrying will not help" in formatted
+        # Headless surfaces (CLI, subagents, channels) have no picker or Settings
+        # page: the config.json spelling of the default is named too.
+        assert "agent.model in ~/.kiro/crew/config.json" in formatted
+        # The generic (pinned-model) branch on the SAME auto-less partition must
+        # not recommend 'auto' either -- that would re-open the circle.
+        generic = _format_acp_error(_MODEL_UNAVAILABLE, served)
+        assert "set agent.model to 'auto'" not in generic
+        assert "model picker" in generic
+        assert "Settings → Chat" in generic
+        # Where 'auto' IS served, the generic branch still offers it as the escape.
+        generic_auto = _format_acp_error(_MODEL_UNAVAILABLE, served + ["auto"])
+        assert "set agent.model to 'auto'" in generic_auto
+
+    def test_capacity_blip_drops_the_auto_step_where_auto_is_not_served(self):
+        """The two capacity-blip messages share the "(2) set agent.model to
+        'auto'" remedy. On a partition whose served list lacks ``auto`` that
+        advice re-opens the circle the unentitled branch closes, so it is
+        emitted only when ``auto`` is served or the list is unknown.
+        """
+        from kiro_crew.acp.client import _format_acp_error
+
+        # Advertised model rejected = capacity blip, not entitlement.
+        no_auto = ["claude-opus-4.8", "glm-5"]
+        with_auto = ["claude-opus-4.8", "auto"]
+        named = _format_acp_error(_MODEL_UNAVAILABLE, no_auto)
+        assert "does not have access" not in named
+        assert "set agent.model to 'auto'" not in named
+        assert "(1) pick a different model in the model picker, or (2) wait" in named
+        assert "set agent.model to 'auto'" in _format_acp_error(_MODEL_UNAVAILABLE, with_auto)
+        # Unknown served list keeps the historical three-step advice.
+        assert "set agent.model to 'auto'" in _format_acp_error(_MODEL_UNAVAILABLE, None)
+
+        unnamed = dict(_MODEL_UNAVAILABLE, data="The model you've selected is temporarily unavailable.")
+        assert "set agent.model to 'auto'" not in _format_acp_error(unnamed, no_auto)
+        assert "set agent.model to 'auto'" in _format_acp_error(unnamed, with_auto)
+
 
 class TestMalformedRequestReachesTheHandlePath:
     """The shared-runtime path must surface the structural-rejection guidance
