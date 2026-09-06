@@ -1580,7 +1580,19 @@ an unreadable scan is reported as unchecked rather than clean.
 tiers. Both are edited in the crew editor's avatar builder (`CrewAvatarBuilder.tsx`,
 reached from the header face, the Overview hub face, and the Avatar row of the
 Triggers pane) and both follow the editor's two-step Apply → Save: Apply commits
-to the editor draft only, Save changes writes the record. The **ghost tier** is
+to the editor draft only, Save changes writes the record. Every face that opens
+the builder renders through one component, `crew/CrewAvatarButton.tsx` (issue
+#9103): a real `<button>` named "Edit avatar" carrying a hover/focus scrim with a
+pencil glyph, a persistent corner pencil badge under `(hover: none)`, and an
+optional one-time "Edit this avatar" chip (`mc-avatar-edit-hint-dismissed`,
+one flag per origin — dismissed by the first click on any face or chip). The
+editor header and the Triggers-pane row also carry an explicit "Edit avatar"
+text button. The read-only Crew Members page reaches the builder WITHOUT
+becoming a second writer: its DM-header face and the drawer's "Edit avatar"
+button navigate to `/capabilities?tab=crews&crew=<name>&avatar=1`, a deep link
+`KiroCrewAgentsPage` latches once the roster has loaded (open that crew's editor;
+`avatar=1` opens the builder on top) and then strips from the URL, so closing the
+editor never re-opens it. The **ghost tier** is
 pure config — POST `/api/agents` and PUT `/api/agents/{name}` accept
 `avatar: {"kind":"ghost","traits":{…}}` (or `{}` to reset) and reject any other
 non-empty shape with 400 `invalid_avatar`, mirroring `session_color`. Either kind

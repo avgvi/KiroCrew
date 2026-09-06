@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Boxes, FolderOpen, Database, Sparkles, Plus, MessageSquare, Users, Star, LayoutGrid, Rows3 } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Boxes, FolderOpen, Database, Sparkles, Plus, MessageSquare, Users, Star, LayoutGrid, Rows3, UserPen } from 'lucide-react'
 import Clickable from '../components/Clickable'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useAppDispatch } from '../store'
@@ -22,6 +22,7 @@ import CrewAvatar, { ghostTraitsFrom, imageAvatarFrom, type CrewAvatarOverride }
 import CrewStateAvatar from '../components/CrewStateAvatar'
 import CrewAvatarBuilder from '../components/CrewAvatarBuilder'
 import { expressionsFrom, soundsFrom } from '../lib/crewAvatarState'
+import CrewAvatarButton from '../components/crew/CrewAvatarButton'
 import CrewWakeSection from '../components/CrewWakeSection'
 import CrewWebhookSection from '../components/CrewWebhookSection'
 import CrewEditorRail from '../components/crew/CrewEditorRail'
@@ -875,6 +876,37 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
     setSheet({ mode: 'edit', name: a.name })
   }, [])
 
+  /** THE way the avatar builder opens. Every face and every "Edit avatar"
+   *  button in the editor calls this one function (issue #9103), so no entry
+   *  can drift to a different gate or a different destination. */
+  const openAvatarBuilder = useCallback(() => setAvatarBuilderOpen(true), [])
+
+  /**
+   * Deep link: `?crew=<name>` opens that crew's editor; `&avatar=1` opens the
+   * avatar builder on top of it. This is how the read-only Crew Members page
+   * reaches the builder without becoming a second editor — it navigates here,
+   * the single write path. Latched once the roster has loaded, then stripped
+   * from the URL (same idiom as SkillsTab's `?review=`): reading the param on
+   * every render would re-open the editor after the user closed it.
+   */
+  const [params, setParams] = useSearchParams()
+  const linkedCrew = params.get('crew')
+  const linkedAvatar = params.get('avatar') === '1'
+  useEffect(() => {
+    if (!linkedCrew || !agentsData) return
+    const target = agents.find(a => a.name === linkedCrew)
+    if (target) {
+      openEdit(target)
+      if (linkedAvatar) setAvatarBuilderOpen(true)
+    }
+    // An unknown name strips silently: the roster below is the honest answer.
+    setParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('crew'); next.delete('avatar')
+      return next
+    }, { replace: true })
+  }, [linkedCrew, linkedAvatar, agentsData, agents, openEdit, setParams])
+
   const closeSheet = useCallback(() => { sheetEpoch.current += 1; setSheet(null); setError(''); setSheetHint(''); setConfirmDelete(false) }, [])
 
   /**
@@ -1629,33 +1661,53 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
             {/* The avatar is itself the entry point to the builder: the
                 first-run review's top finding was that a face setting filed
                 under "Triggers" has no scent — but everyone tries clicking
-                the face. The Triggers-pane row remains as the discoverable
-                text route. */}
+                the face. CrewAvatarButton makes that visible (hover scrim +
+                pencil, persistent badge on touch); the "Edit avatar" button
+                beside the title is the text route that needs no guessing at
+                all (issue #9103). No first-run hint chip here — the text
+                button IS the hint; the chip is for the Crew Members header,
+                whose text route sits behind the drawer toggle.
+
+                Two visual groups, not one row of controls: the IDENTITY block
+                (face · name · source) on the left, and the ACTION group on the
+                right. The face is the crew's identity that happens to be
+                pressable — it is not a peer of the two labelled actions, and
+                the header's action row stays at two (max-two-buttons-per-row
+                counts per visual group). */}
+            <div className="flex min-w-0 items-center gap-3" data-testid="crew-editor-identity">
+              {!creating && (
+                <CrewAvatarButton
+                  size={28}
+                  onEdit={openAvatarBuilder}
+                  // Outside the pane's <fieldset> fence, so it carries the same
+                  // busy gate itself: a builder opened mid-save could Apply a newer
+                  // draft that the completing save's close then discards.
+                  disabled={sheetBusy}
+                  data-testid="header-avatar-button"
+                >
+                  <CrewStateAvatar seed={editing} avatar={editAvatar ?? undefined} size={28} onImageError={() => setError(i18nT('components.avatarBuilder.image_load_failed'))} />
+                </CrewAvatarButton>
+              )}
+              <DialogTitle className="font-mono">
+                {creating ? i18nT('pages.kiroCrewAgentsPage.create_agent') : editing}
+              </DialogTitle>
+              {!creating && editingAgent?.source && <SourceBadge source={editingAgent.source} />}
+            </div>
             {!creating && (
-              <button
-                type="button"
-                onClick={() => setAvatarBuilderOpen(true)}
-                // Outside the pane's <fieldset> fence, so it carries the same
-                // busy gate itself: a builder opened mid-save could Apply a newer
-                // draft that the completing save's close then discards.
-                disabled={sheetBusy}
-                className="rounded-md transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
-                aria-label={i18nT('components.avatarBuilder.title')}
-                title={i18nT('components.avatarBuilder.title')}
-                data-testid="header-avatar-button"
-              >
-                <CrewStateAvatar seed={editing} avatar={editAvatar ?? undefined} size={28} onImageError={() => setError(i18nT('components.avatarBuilder.image_load_failed'))} />
-              </button>
-            )}
-            <DialogTitle className="font-mono">
-              {creating ? i18nT('pages.kiroCrewAgentsPage.create_agent') : editing}
-            </DialogTitle>
-            {!creating && editingAgent?.source && <SourceBadge source={editingAgent.source} />}
-            {!creating && (
-              <Btn className="ml-auto" onClick={requestChat}>
-                <MessageSquare className="lucide-inline" aria-hidden="true" />
-                {i18nT('pages.kiroCrewAgentsPage.chat_with_this_crew')}
-              </Btn>
+              <div className="ml-auto flex items-center gap-2" data-testid="crew-editor-actions">
+                <Btn onClick={openAvatarBuilder} disabled={sheetBusy} data-testid="header-edit-avatar" title={i18nT('components.avatarBuilder.edit_avatar')} aria-label={i18nT('components.avatarBuilder.edit_avatar')}>
+                  <UserPen className="lucide-inline" aria-hidden="true" />
+                  {/* Both header labels fold to their icon on a phone-width
+                      header so the crew name keeps its room (with two labelled
+                      buttons the Chat label wrapped to four lines and the
+                      title truncated to "on…"); aria-label carries the name. */}
+                  <span className="hidden sm:inline">{i18nT('components.avatarBuilder.edit_avatar')}</span>
+                </Btn>
+                <Btn onClick={requestChat} title={i18nT('pages.kiroCrewAgentsPage.chat_with_this_crew')} aria-label={i18nT('pages.kiroCrewAgentsPage.chat_with_this_crew')}>
+                  <MessageSquare className="lucide-inline" aria-hidden="true" />
+                  <span className="hidden sm:inline">{i18nT('pages.kiroCrewAgentsPage.chat_with_this_crew')}</span>
+                </Btn>
+              </div>
             )}
           </DialogHeader>
 
@@ -1726,16 +1778,9 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                       // the hub does not teach the opposite lesson from the
                       // header face (same title, same entry point).
                       hub={
-                        <button
-                          type="button"
-                          onClick={() => setAvatarBuilderOpen(true)}
-                          className="rounded-full transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
-                          aria-label={i18nT('components.avatarBuilder.title')}
-                          title={i18nT('components.avatarBuilder.title')}
-                          data-testid="hub-avatar-button"
-                        >
+                        <CrewAvatarButton size={34} onEdit={openAvatarBuilder} data-testid="hub-avatar-button">
                           <CrewAvatar seed={editing} avatar={editAvatar ?? undefined} size={34} />
-                        </button>
+                        </CrewAvatarButton>
                       }
                       templateLabel={provider.labels.agentTemplateField}
                       template={kiroAgent}
@@ -1877,9 +1922,12 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                         hint={i18nT('components.avatarBuilder.field_hint')}
                       >
                         <div className="flex items-center gap-2.5">
-                          <CrewAvatar seed={editing || ''} avatar={editAvatar ?? undefined} size={36} />
-                          <Btn onClick={() => setAvatarBuilderOpen(true)} data-testid="open-avatar-builder">
-                            {i18nT('components.avatarBuilder.customize')}
+                          <CrewAvatarButton size={36} onEdit={openAvatarBuilder} data-testid="field-avatar-button">
+                            <CrewAvatar seed={editing || ''} avatar={editAvatar ?? undefined} size={36} />
+                          </CrewAvatarButton>
+                          <Btn onClick={openAvatarBuilder} data-testid="open-avatar-builder">
+                            <UserPen className="lucide-inline" aria-hidden="true" />
+                            {i18nT('components.avatarBuilder.edit_avatar')}
                           </Btn>
                           {editAvatar && (
                             <span className="text-[11px] text-muted">

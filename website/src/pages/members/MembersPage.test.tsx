@@ -838,3 +838,68 @@ describe('MembersPage auto patrol (monitor loop status)', () => {
     expect(screen.queryByTestId('member-patrol-error')).toBeNull()
   })
 })
+
+describe('MembersPage avatar entry (issue #9103)', () => {
+  const AVATAR_LINK = '/capabilities?tab=crews&crew=oncall&avatar=1'
+
+  beforeEach(() => { localStorage.clear() })
+
+  it('the DM header face is an "Edit avatar" button that deep-links into the crew manager builder', async () => {
+    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    fireEvent.click(await screen.findByText('oncall'))
+    const face = await screen.findByTestId('member-avatar-button')
+    expect(face.tagName).toBe('BUTTON')
+    expect(face).toHaveAccessibleName('Edit avatar')
+    // Visible affordance travels with the face: scrim for hover, badge for touch.
+    expect(face.querySelector('[data-testid="avatar-edit-scrim"]')).not.toBeNull()
+    expect(face.querySelector('[data-testid="avatar-edit-badge"]')).not.toBeNull()
+    fireEvent.click(face)
+    // Mutation check on the DESTINATION: this page never writes — the
+    // builder opens in the crew manager, on THIS crew, with the builder up.
+    expect(navigateSpy).toHaveBeenCalledWith(AVATAR_LINK)
+  })
+
+  it('the drawer carries an explicit "Edit avatar" text route to the same destination', async () => {
+    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    fireEvent.click(await screen.findByText('oncall'))
+    await screen.findByTestId('member-drawer')
+    const btn = screen.getByTestId('member-edit-avatar')
+    expect(btn).toHaveTextContent('Edit avatar')
+    fireEvent.click(btn)
+    expect(navigateSpy).toHaveBeenCalledWith(AVATAR_LINK)
+    // The existing roster-level edit route is untouched.
+    expect(screen.getByRole('button', { name: /edit in crew manager/i })).toBeInTheDocument()
+  })
+
+  it('encodes the crew name in the deep link', async () => {
+    await renderPage([row({ name: 'on call/2', slug: 'on-call-2', bound: true, slot_key: 'member-on-call-2' })])
+    fireEvent.click(await screen.findByText('on call/2'))
+    fireEvent.click(await screen.findByTestId('member-avatar-button'))
+    expect(navigateSpy).toHaveBeenCalledWith('/capabilities?tab=crews&crew=on%20call%2F2&avatar=1')
+  })
+
+  it('shows the one-time "Edit this avatar" chip only while the member wears the default face', async () => {
+    // The real backend stores `{}` for "no override" — truthy, so a raw
+    // `!avatar` test would hide the chip for EVERY default face. The row
+    // fixture here carries exactly that shape.
+    await renderPage([
+      row({ bound: true, slot_key: 'member-oncall', avatar: {} }),
+      row({ name: 'beta', slug: 'beta', avatar: { kind: 'image', v: 1 } }),
+    ])
+    fireEvent.click(await screen.findByText('oncall'))
+    const chip = await screen.findByTestId('avatar-edit-hint')
+    expect(chip).toHaveTextContent('Edit this avatar')
+    // A member with a custom face gets no nudge.
+    fireEvent.click(screen.getByText('beta'))
+    await waitFor(() => expect(screen.queryByTestId('avatar-edit-hint')).toBeNull())
+  })
+
+  it('the chip leaves through the click that opens the builder, and stays gone', async () => {
+    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    fireEvent.click(await screen.findByText('oncall'))
+    fireEvent.click(await screen.findByTestId('avatar-edit-hint'))
+    expect(navigateSpy).toHaveBeenCalledWith(AVATAR_LINK)
+    expect(screen.queryByTestId('avatar-edit-hint')).toBeNull()
+    expect(localStorage.getItem('mc-avatar-edit-hint-dismissed')).toBe('1')
+  })
+})

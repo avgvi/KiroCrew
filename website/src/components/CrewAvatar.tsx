@@ -132,6 +132,16 @@ export function ghostTraitsFrom(avatar: unknown): KiroGhostTraits | null {
 }
 
 /**
+ * Does this record wear a customized face? The SAME coercion the renderer
+ * applies, so "default" here means exactly "the name-derived ghost renders".
+ * Callers must not test the raw field: the backend stores `{}` for no
+ * override, and `{}` is truthy.
+ */
+export function hasAvatarOverride(avatar: unknown): boolean {
+  return ghostTraitsFrom(avatar) !== null || imageAvatarFrom(avatar) !== null
+}
+
+/**
  * Generated data URIs for NAME-SEEDED avatars only, keyed by seed + working
  * intensity (NUL-joined so the parts cannot collide with a seed containing
  * the tier word). Module-level rather than per-component so a crew's avatar
