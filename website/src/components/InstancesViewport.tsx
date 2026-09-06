@@ -39,7 +39,7 @@ import { SettingsLink } from './SettingsLink'
 import { useAppDispatch, useAppSelector } from '../store'
 import { clearPaneReady, removeWarm, setActiveId, setPaneReady, setUnread, setWarm } from '../store/instancesSlice'
 import InstanceTabBar, { visibleInstanceTabs, useCrewPins, toggleCrewPin, useCrewSwitcherStableOrder, setStableOrder } from './InstanceTabBar'
-import { resolveTunnelOrigin } from '../lib/tunnelOrigin'
+import { parseLoopbackOriginPort, resolveTunnelOrigin } from '../lib/tunnelOrigin'
 import { frameDocumentState, paneLog, safePaneUrl } from '../lib/paneLog'
 import { LINUX_CAPTION_CONTROLS_WIDTH, TRAFFIC_LIGHT_INSET_PX, WIN_CAPTION_OVERLAY_WIDTH } from '../lib/electron'
 import { isEmbeddedPane } from '../lib/embedded'
@@ -273,10 +273,25 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
-      const id = resolveTunnelOrigin(e.origin, portToIdRef.current)
-      if (!id) return
       const data = e.data
       if (!data || typeof data !== 'object') return
+      const id = resolveTunnelOrigin(e.origin, portToIdRef.current)
+      if (!id) {
+        // A readiness announce from a loopback origin this parent does not
+        // currently map to a warm pane is the handshake being dropped on the
+        // floor: the pane loaded and said so, and the parent could not tell
+        // whose voice it was (the warm entry moved to another port, was
+        // evicted, or the origin map has not caught up). Only THIS type is
+        // journaled, and the child sends it at most six times per load, so the
+        // line cannot flood; every other unattributed message stays silent.
+        if (data.type === 'mc-embedded-ready' && parseLoopbackOriginPort(e.origin) !== null) {
+          paneLog('ready-unattributed', {
+            origin: e.origin,
+            knownPorts: [...portToIdRef.current.keys()].join(','),
+          })
+        }
+        return
+      }
       if (data.type === 'mc-unread-slots') {
         const count = Number(data.count)
         if (!Number.isFinite(count) || count < 0) return
@@ -511,6 +526,12 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
     if (!activeId || activeWarmPort === undefined || activeReady) return
     const id = activeId
     const port = activeWarmPort
+    // The countdown STARTING is journaled too, not only its expiry. A pane that
+    // shows "loading" forever without ever producing `load-timeout` is a pane
+    // whose watchdog never armed — because this effect saw `activeReady` as
+    // true while the overlay used a different verdict, or because it re-armed
+    // in a loop — and the absence of an arm line is what says so.
+    paneLog('watchdog-armed', { id, port, seq: activeSeq })
     const t = window.setTimeout(() => {
       setTimedOut(prev => (prev[id] ? prev : { ...prev, [id]: true }))
       // `frame` is the verdict: `cross-origin` means the pane really loaded the
@@ -554,7 +575,15 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
     const ids = Object.keys(warm)
     if (ids.length <= warmCap) return
     const victim = [...mru].reverse().find(id => id !== activeId && warm[id])
-    if (victim) dispatch(removeWarm(victim))
+    if (victim) {
+      // Journaled because eviction is the one teardown the user never asked
+      // for: the tab stays, the tunnel stays, only the iframe goes — and the
+      // next click re-warms it as a brand-new load. Without this line a pane
+      // that was evicted and then failed to re-warm reads, in the log, like a
+      // pane that never had a problem until it suddenly did.
+      paneLog('evict', { id: victim, port: warm[victim]?.port, warmCount: ids.length, cap: warmCap })
+      dispatch(removeWarm(victim))
+    }
   }, [warm, warmCap, mru, activeId, dispatch])
 
   // Drop the per-pane load facts of a pane that is no longer warm. Both the
