@@ -432,6 +432,12 @@ async def api_connections_mint_state(request: web.Request) -> web.Response:
         payload["oauth_url"] = view["oauth_url"]
     if view.get("reason"):
         payload["reason"] = view["reason"]
+    if view.get("rejected_endpoint"):
+        # Rides only with reason == "mint_url_rejected". Sanitized host+path
+        # (query/PKCE excluded, credential path self-redacts), so it is safe to
+        # cross the wire; without this line the field the mint view carries never
+        # reaches the card and the naming feature is dead below the transport.
+        payload["rejected_endpoint"] = view["rejected_endpoint"]
     return web.json_response(payload)
 
 

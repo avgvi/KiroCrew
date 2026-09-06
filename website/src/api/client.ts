@@ -205,6 +205,11 @@ export interface ConnectionMintState {
   state: 'idle' | 'minting' | 'waiting' | 'granted' | 'failed' | 'expired'
   oauth_url?: string
   reason?: string
+  /** Sanitized "host/path" of a URL the credential gate rejected, present only
+   *  alongside reason === 'mint_url_rejected'. host+path only (query/PKCE
+   *  material excluded) and a credential-bearing path is redacted, so it is safe
+   *  to render -- it tells the user WHICH endpoint to add to oauth_endpoints.json. */
+  rejected_endpoint?: string
   /** Opaque id of the backend row, unique across gateway restarts as well as
    *  within one process. Reported so a row can be told apart from its
    *  successor for the same provider. */

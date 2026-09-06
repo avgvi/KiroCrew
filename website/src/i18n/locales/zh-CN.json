@@ -9757,6 +9757,7 @@
       "mint_failure_timed_out": "授权设置在批准地址准备好之前超时。请重试连接。",
       "mint_failure_unknown": "授权设置在批准地址准备好之前失败。请重试连接。",
       "mint_failure_url_rejected": "服务商返回的批准地址包含类似凭据的数据，因此未予显示。",
+      "mint_failure_url_rejected_endpoint": "授权端点 {{endpoint}} 看起来携带了凭据，因此被拒绝。如果它是可信任、自托管或其他未列出的身份提供方，请将其添加到 {{productName}} 数据主目录中的 oauth_endpoints.json，格式为 {\"additional_authorization_endpoints\": [{\"host\": …, \"path\": …}]}；否则请让服务器所有者修正该 URL。",
       "needs_attention": "需要处理",
       "no_matching_services": "没有与搜索匹配的服务。",
       "not_connected": "未连接",

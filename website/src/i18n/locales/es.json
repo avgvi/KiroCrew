@@ -10055,6 +10055,7 @@
       "mint_failure_timed_out": "La configuración de autorización agotó el tiempo de espera antes de que la dirección de aprobación estuviera lista. Intenta conectarte de nuevo.",
       "mint_failure_unknown": "La configuración de autorización falló antes de que la dirección de aprobación estuviera lista. Intenta conectarte de nuevo.",
       "mint_failure_url_rejected": "El proveedor devolvió una dirección de aprobación que contenía datos similares a credenciales, por lo que no se mostró.",
+      "mint_failure_url_rejected_endpoint": "El endpoint de autorización {{endpoint}} parecía llevar una credencial, por lo que se rechazó. Si es un proveedor de identidad de confianza, autoalojado o no listado, agrégalo a oauth_endpoints.json en el directorio de datos de {{productName}}, con el formato {\"additional_authorization_endpoints\": [{\"host\": ..., \"path\": ...}]}; de lo contrario, pide al propietario del servidor que corrija la URL.",
       "needs_attention": "Requiere atención",
       "no_matching_services": "Ningún servicio coincide con esta búsqueda.",
       "not_connected": "No conectado",

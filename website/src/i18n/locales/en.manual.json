@@ -3784,6 +3784,7 @@
       "mint_failure_timed_out": "Authorization setup timed out before an approval address was ready. Try connecting again.",
       "mint_failure_unknown": "Authorization setup failed before an approval address was ready. Try connecting again.",
       "mint_failure_url_rejected": "The provider returned an approval address containing credential-like data, so it was not displayed.",
+      "mint_failure_url_rejected_endpoint": "The authorization endpoint {{endpoint}} looked like it carried a credential, so it was rejected. If it is a trusted, self-hosted or otherwise unlisted identity provider, add it to oauth_endpoints.json in the {{productName}} data home, shaped {\"additional_authorization_endpoints\": [{\"host\": ..., \"path\": ...}]}; otherwise ask the server owner to fix the URL.",
       "needs_attention": "Needs attention",
       "no_matching_services": "No services match this search.",
       "not_connected": "Not connected",

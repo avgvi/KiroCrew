@@ -10055,6 +10055,7 @@
       "mint_failure_timed_out": "La configuration de l’autorisation a expiré avant que l’adresse d’approbation soit prête. Réessayez de vous connecter.",
       "mint_failure_unknown": "La configuration de l’autorisation a échoué avant que l’adresse d’approbation soit prête. Réessayez de vous connecter.",
       "mint_failure_url_rejected": "Le fournisseur a renvoyé une adresse d’approbation contenant des données ressemblant à des identifiants. Elle n’a donc pas été affichée.",
+      "mint_failure_url_rejected_endpoint": "Le point de terminaison d’autorisation {{endpoint}} semblait contenir un identifiant, il a donc été rejeté. S’il s’agit d’un fournisseur d’identité de confiance, auto-hébergé ou autrement non listé, ajoutez-le à oauth_endpoints.json dans le répertoire de données de {{productName}}, au format {\"additional_authorization_endpoints\": [{\"host\": ..., \"path\": ...}]} ; sinon, demandez au propriétaire du serveur de corriger l’URL.",
       "needs_attention": "Action requise",
       "no_matching_services": "Aucun service ne correspond à cette recherche.",
       "not_connected": "Non connecté",

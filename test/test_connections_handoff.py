@@ -716,3 +716,57 @@ async def test_the_premint_then_connect_round_trip_serves_the_warm_url(
     # payload deliberately does not carry the flag: no card consumes it, and the
     # authorization verdict is the status feed's job.
     assert not _mints["notion"].get("shared")
+
+
+# ── the rejected-endpoint wire contract (#7765) ──
+#
+# The mint-state handler re-projects MintState through an explicit key allowlist,
+# so a field the in-process view carries is invisible to the card unless the
+# handler names it. These tests assert ARRIVAL at the JSON boundary, not storage:
+# a value computed, stored and rendered is still dead if the transport drops it.
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_mint_names_the_endpoint_on_the_wire():
+    """The sanitized endpoint must survive serialization to the card, not merely
+    live in the in-process MintState. This is the layer whose absent test let the
+    field die at the handler allowlist."""
+    _mints["notion"] = {
+        "state": "failed",
+        "reason": "mint_url_rejected",
+        "rejected_endpoint": "auth.example.com/authorize",
+        "token": "tok-1",
+        "started": 0.0,
+    }
+    client = await _client()
+    try:
+        body = await (await client.get("/api/connections/mint?slug=notion")).json()
+    finally:
+        await client.close()
+
+    assert body["state"] == "failed"
+    assert body["reason"] == "mint_url_rejected"
+    assert body["rejected_endpoint"] == "auth.example.com/authorize"
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_without_a_named_endpoint_omits_the_field_on_the_wire():
+    """Control for the arrival test: when the helper could not name the endpoint
+    (host-borne credential, userinfo, unparseable), the mint view carries no
+    rejected_endpoint, so the payload must not invent one -- the card then falls
+    back to its unnamed message."""
+    _mints["notion"] = {
+        "state": "failed",
+        "reason": "mint_url_rejected",
+        "token": "tok-2",
+        "started": 0.0,
+    }
+    client = await _client()
+    try:
+        body = await (await client.get("/api/connections/mint?slug=notion")).json()
+    finally:
+        await client.close()
+
+    assert body["state"] == "failed"
+    assert body["reason"] == "mint_url_rejected"
+    assert "rejected_endpoint" not in body

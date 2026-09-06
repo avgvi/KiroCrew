@@ -9906,6 +9906,7 @@
       "mint_failure_timed_out": "Beim Einrichten der Autorisierung wurde das Zeitlimit erreicht, bevor die Freigabeadresse bereit war. Versuche erneut, eine Verbindung herzustellen.",
       "mint_failure_unknown": "Die Autorisierung konnte nicht eingerichtet werden, bevor die Freigabeadresse bereit war. Versuche erneut, eine Verbindung herzustellen.",
       "mint_failure_url_rejected": "Der Anbieter hat eine Freigabeadresse mit Daten zurückgegeben, die wie Zugangsdaten aussehen. Daher wurde sie nicht angezeigt.",
+      "mint_failure_url_rejected_endpoint": "Der Autorisierungsendpunkt {{endpoint}} schien Zugangsdaten zu enthalten und wurde daher abgelehnt. Wenn es sich um einen vertrauenswürdigen, selbst gehosteten oder anderweitig nicht gelisteten Identitätsanbieter handelt, füge ihn zu oauth_endpoints.json im {{productName}}-Datenverzeichnis hinzu, im Format {\"additional_authorization_endpoints\": [{\"host\": ..., \"path\": ...}]}; andernfalls bitte den Serverbetreiber, die URL zu korrigieren.",
       "needs_attention": "Aktion erforderlich",
       "no_matching_services": "Keine Dienste entsprechen dieser Suche.",
       "not_connected": "Nicht verbunden",

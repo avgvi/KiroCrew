@@ -9757,6 +9757,7 @@
       "mint_failure_timed_out": "承認アドレスの準備ができる前に、認証の設定がタイムアウトしました。もう一度接続してください。",
       "mint_failure_unknown": "承認アドレスの準備ができる前に、認証の設定に失敗しました。もう一度接続してください。",
       "mint_failure_url_rejected": "プロバイダーから認証情報のようなデータを含む承認アドレスが返されたため、表示しませんでした。",
+      "mint_failure_url_rejected_endpoint": "認可エンドポイント {{endpoint}} は認証情報を含んでいるように見えたため、拒否されました。信頼できる、セルフホストされた、またはその他の未掲載の ID プロバイダーであれば、{{productName}} データホームの oauth_endpoints.json に {\"additional_authorization_endpoints\": [{\"host\": ..., \"path\": ...}]} の形式で追加してください。そうでない場合は、サーバー所有者に URL の修正を依頼してください。",
       "needs_attention": "注意が必要",
       "no_matching_services": "この検索に一致するサービスはありません。",
       "not_connected": "接続されていません",

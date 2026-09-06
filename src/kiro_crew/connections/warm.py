@@ -2397,7 +2397,10 @@ def _credential_bearing_slugs(urls: dict[str, str]) -> set[str]:
     The gate is :func:`~kiro_crew.security.oauth_url_contains_credential` -- the same
     predicate the cold mint and the chat consent banner apply -- and it is synchronous
     because it can consult the operator's on-disk OAuth-endpoint extension, an unbounded
-    stat on a network mount. Never returns or logs the value it judged.
+    stat on a network mount. Never returns or logs the value it judged: a refused slug's
+    claim is released, and the endpoint identity is surfaced on the ensuing COLD mint,
+    which re-hits the same URL and names it through ``mint.py``'s ``mint_url_rejected``
+    card view (never through the logger -- see ``docs/system-specs/modules/security.md``).
     """
     return {slug for slug, url in urls.items() if url and oauth_url_contains_credential(url)}
 
@@ -2436,7 +2439,12 @@ async def _absorb_warm_requests(result: _WarmMintResult, claims: dict[str, str])
                 url = resolved.get(slug, "")
                 if not url or slug in tainted:
                     # Released either way, not failed: the card asks for a fresh mint rather
-                    # than sitting on a claim nothing will ever fill.
+                    # than sitting on a claim nothing will ever fill. A tainted slug's
+                    # endpoint identity is surfaced on the ensuing COLD mint, which re-hits
+                    # the same URL and names it via mint.py's mint_url_rejected view -- the
+                    # warm path deliberately keeps its release semantics (see
+                    # test_a_url_carrying_a_credential_is_refused_rather_than_stored) rather
+                    # than converting a screened premint into a terminal failure.
                     unfulfilled[slug] = token
                     continue
                 entry.update(

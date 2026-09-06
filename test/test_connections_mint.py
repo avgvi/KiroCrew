@@ -1003,10 +1003,100 @@ async def test_a_second_credential_bearing_url_surfaces_failure_without_a_third_
     view = mint.pending_mint_for("notion")
     assert view is not None
     assert view["token"] == token
-    assert _state_only(view) == {"state": "failed", "reason": "mint_url_rejected"}
+    # The card names WHICH endpoint the gate refused (host+path only), so the
+    # user knows what to add to oauth_endpoints.json. The credential lived in the
+    # query, which sanitized_oauth_endpoint never echoes.
+    assert _state_only(view) == {
+        "state": "failed",
+        "reason": "mint_url_rejected",
+        "rejected_endpoint": "auth.example.com/authorize",
+    }
     assert len(_FakeClient.instances) == 2
     assert [client.shutdowns for client in _FakeClient.instances] == [1, 1]
     assert protected_pids == set()
+    assert logged == ["error reason=mint_url_rejected"]
+    assert "AKIAIOSFODNN7EXAMPLE" not in caplog.text
+    assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(logged)
+    # The endpoint rides ONLY the card view, never a log or audit line.
+    assert "auth.example.com" not in caplog.text
+    assert "auth.example.com" not in json.dumps(logged)
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_the_helper_cannot_name_leaves_the_card_unnamed(
+    monkeypatch: pytest.MonkeyPatch, protected_pids: set[int], caplog
+):
+    """Control for the endpoint-naming case: when the credential is in the HOST,
+    sanitized_oauth_endpoint returns None (a redacted host would name nothing),
+    so the card must fall back to the unnamed mint_url_rejected with NO
+    rejected_endpoint -- naming must not degrade into showing a partial host."""
+    # AKIA... IS the host label, so the helper refuses to name it (returns None).
+    tainted = "https://AKIAIOSFODNN7EXAMPLE.example.com/authorize?client_id=abc"
+
+    class _Tainted(_FakeClient):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.requests = [{"serverName": "notion", "oauthUrl": tainted}]
+
+    attempts = iter([_Tainted, _Tainted])
+    monkeypatch.setattr(mint, "_acp_client_factory", lambda: next(attempts))
+    logged: list[str] = []
+    monkeypatch.setattr(
+        mint,
+        "_log_mint_outcome",
+        lambda slug, outcome, detail: logged.append(f"{outcome} {detail}"),
+    )
+    token, prior = await mint.reserve_mint_row("notion")
+
+    with caplog.at_level("WARNING"):
+        await mint.start_oauth_mint("notion", _URL, token, prior)
+
+    view = mint.pending_mint_for("notion")
+    assert view is not None
+    # No rejected_endpoint: the helper could not name it safely, so the card
+    # keeps its unnamed message rather than surfacing a credential-bearing host.
+    assert _state_only(view) == {"state": "failed", "reason": "mint_url_rejected"}
+    assert logged == ["error reason=mint_url_rejected"]
+    assert "AKIAIOSFODNN7EXAMPLE" not in caplog.text
+    assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(logged)
+
+
+@pytest.mark.asyncio
+async def test_a_credential_in_the_path_leaves_the_card_unnamed(
+    monkeypatch: pytest.MonkeyPatch, protected_pids: set[int], caplog
+):
+    """The OTHER unnameable branch: sanitized_oauth_endpoint returns a real host
+    but replaces a credential-bearing PATH with the redaction tag, so the pair is
+    ('idp.example.com', '[REDACTED: credential]'). Rendering that inline would put
+    'idp.example.com[REDACTED: credential]' on the card as if it were pasteable, so
+    the card must drop rejected_endpoint and fall back to the unnamed message --
+    the branch the host-only control did not cover (UX review finding)."""
+    # AKIA... is a PATH segment: the host names cleanly, the path self-redacts.
+    tainted = "https://idp.example.com/AKIAIOSFODNN7EXAMPLE/authorize"
+
+    class _Tainted(_FakeClient):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.requests = [{"serverName": "notion", "oauthUrl": tainted}]
+
+    attempts = iter([_Tainted, _Tainted])
+    monkeypatch.setattr(mint, "_acp_client_factory", lambda: next(attempts))
+    logged: list[str] = []
+    monkeypatch.setattr(
+        mint,
+        "_log_mint_outcome",
+        lambda slug, outcome, detail: logged.append(f"{outcome} {detail}"),
+    )
+    token, prior = await mint.reserve_mint_row("notion")
+
+    with caplog.at_level("WARNING"):
+        await mint.start_oauth_mint("notion", _URL, token, prior)
+
+    view = mint.pending_mint_for("notion")
+    assert view is not None
+    # No rejected_endpoint: a host + "[REDACTED: credential]" pair is not a
+    # copy-ready endpoint, so the card keeps its unnamed message.
+    assert _state_only(view) == {"state": "failed", "reason": "mint_url_rejected"}
     assert logged == ["error reason=mint_url_rejected"]
     assert "AKIAIOSFODNN7EXAMPLE" not in caplog.text
     assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(logged)
