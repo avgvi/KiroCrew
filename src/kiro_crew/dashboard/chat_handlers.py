@@ -163,6 +163,7 @@ _SESSION_RELOAD_NOTICE = (
     "agent spec, environment, and MCP servers. The conversation is preserved."
 )
 
+
 # Approval modes that grant auto-approval to the SLOT they name, as opposed to
 # the process-global YOLO grant. A tuple, not a set: membership is tested against
 # a request-supplied value, and tuple `in` compares by equality rather than
@@ -7377,22 +7378,25 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
         return body_err
     assert body is not None  # read_bounded_json returns (dict, None) on success
     ws_name = body.get("workspace", "default")
+    if not isinstance(ws_name, str):
+        # The sibling project handler's guard: with the message-count refusal
+        # lifted, this value reaches `default_project_dir` and the slot header
+        # on a live conversation, so a non-string is rejected at the boundary.
+        return web.json_response(
+            {"error": "workspace must be a string", "code": "invalid_workspace"}, status=400
+        )
     if slot.is_remote:
-        # Same guard as the local path, then hand the pick to the peer.
         # ``slot.project`` is deliberately left alone: it is a path on THIS
         # machine (file search, @-mentions), and `default_project_dir` would
         # write a local directory that has nothing to do with the peer's
         # workspace. The peer resolves its own project from the name. No
         # local session is reset, so this runs outside slot._lock (the
         # effort handler's ordering).
-        if slot.total_messages > 0:
-            return web.json_response(
-                {
-                    "error": "Cannot change workspace after messages have been sent. Open a new session instead.",
-                    "code": "conversation_started",
-                },
-                status=409,
-            )
+        #
+        # No message-count refusal (#1717): the peer owns its own session
+        # lifecycle, so the local message count says nothing about what the
+        # switch costs there, and refusing here would be this side inventing a
+        # policy for state it does not hold. The peer's own handler answers.
         return await _apply_remote_pick(request, state, slot, "workspace", {"workspace": ws_name})
     # Same serialization as the agent switch: the reset await yields the event
     # loop, so the mutate-then-reset section runs under the slot's lock — an
@@ -7425,26 +7429,85 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
         denied = _app_cancel_denied(request, slot, "chat.slot_workspace", session_key)
         if denied is not None:
             return denied
-        # Block workspace change after conversation has started. Checked
-        # INSIDE the lock: the guard is a check-then-act across an await, so
-        # an unlocked read could pass while a serialized switch this request
-        # waited on was still resetting.
-        if slot.total_messages > 0:
+        # A started conversation is NOT refused (#1717). The refusal that
+        # stood here protected nothing the sibling handlers protect: the
+        # transcript and its session key are workspace-independent (the name
+        # is a metadata field inside the same history file, never part of its
+        # path), so a switch costs the LIVE agent context and nothing
+        # persisted -- and `api_chat_slot_agent` already re-points
+        # ``slot.workspace`` mid-conversation, with no message-count guard,
+        # whenever the picked agent carries different bindings. A transcript
+        # marker for the restart is deliberately NOT added here: every sibling
+        # reset site would need the same row, and that is one design for all of
+        # them (#9086), not a rider on this endpoint.
+        #
+        # Same-value re-pick: nothing to switch, so nothing to tear down.
+        # Checked INSIDE the locks (the model handler's ordering): a serialized
+        # predecessor targeting this workspace may have committed while this
+        # request waited, and resetting again would kill the session that
+        # predecessor just set up. Answers the same 200 a real switch does,
+        # since the slot IS on the requested workspace.
+        if slot.workspace == ws_name:
+            return web.json_response({"ok": True, "workspace": ws_name})
+        # Children attached to this session run on the runtime the reset
+        # below tears down, so refuse rather than discard their work -- the
+        # same probe every sibling switch (agent, model, effort, reload)
+        # applies. Before the commit, so no rollback is needed.
+        children_409 = _subagents_attached_response(state, slot, session_key, "slot_workspace")
+        if children_409 is not None:
+            return children_409
+        # Never tear down an in-flight turn: the model handler's early
+        # refusal, copied here (GPT + Opus review findings on #9084). The reset
+        # below calls _unblock_pending_waits BEFORE SessionManager.reset's
+        # atomic busy decline, so without this check a turn parked on a
+        # pending approval has that approval rejected and only then gets a
+        # 409 -- the turn is altered despite the refusal. slot.running is
+        # checked FIRST because it is set at dispatch, before the multi-second
+        # provider.start() registers a session: a cold-starting first turn is
+        # invisible to get_provider but not to slot.running, and without this
+        # the switch would report success while that turn runs on the old
+        # project. isinstance, not a None check, for the reason the model
+        # handler documents. The atomic skip_if_busy decline stays as the
+        # backstop for a turn that starts after this read.
+        pre_provider = state.sessions.get_provider(session_key)
+        if slot.running or (
+            isinstance(pre_provider, LLMProvider) and pre_provider.has_active_turn()
+        ):
             return web.json_response(
-                {
-                    "error": "Cannot change workspace after messages have been sent. Open a new session instead.",
-                    "code": "conversation_started",
-                },
-                status=409,
+                {"error": "a turn is in flight", "code": "turn_in_flight"}, status=409
             )
         prior_workspace = slot.workspace
         prior_project = slot.project
-        slot.workspace = ws_name
-        slot.project = default_project_dir(ws_name)
+        # Commit as identity tokens (the agent handler's _CommitToken
+        # precedent): ``slot.project`` has lock-free writers -- the in-turn
+        # set_project directive lands during the reset await -- so a rollback
+        # must unwind only the value THIS request wrote, never a concurrent
+        # write of a different (or even the same) text.
+        committed_workspace = _CommitToken(ws_name)
+        committed_project = _CommitToken(default_project_dir(ws_name))
+        slot.workspace = committed_workspace
+        slot.project = committed_project
         logger.info("Slot %s workspace switched to %r, resetting session", name, ws_name)
-        # skip_if_busy: the total_messages guard above is checked before this
-        # await, and message dispatch does not take slot._lock — a first send
-        # can slip into that window. SessionManager.reset evaluates busyness
+
+        def _rollback() -> None:
+            """Unwind this request's commit on every 409 path.
+
+            Identity-scoped per field (see the tokens above), then re-marked
+            dirty: the periodic flush runs unlocked every few seconds and may
+            already have written the provisional bindings to disk during the
+            reset await (a started slot is dirty whenever a turn is active),
+            so without the re-mark a rejected switch would survive a restart.
+            The flush rebuilds the metadata line from the live fields, so the
+            re-mark reconverges disk to whatever the rollback left.
+            """
+            if slot.workspace is committed_workspace:
+                slot.workspace = prior_workspace
+            if slot.project is committed_project:
+                slot.project = prior_project
+            slot._dirty = True
+
+        # skip_if_busy: message dispatch does not take slot._lock, so a send
+        # can land while this request holds it. SessionManager.reset evaluates busyness
         # atomically with the session pop (the authoritative backstop
         # api_chat_slot_reload documents), so the slipped-in turn is declined
         # here instead of torn down mid-stream.
@@ -7496,8 +7559,7 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
                     # Roll back the commit (commit-before-reset means the new
                     # pair is already visible) and answer the same 409 the
                     # guard gives.
-                    slot.workspace = prior_workspace
-                    slot.project = prior_project
+                    _rollback()
                     return web.json_response(
                         {"error": "a turn is in flight", "code": "turn_in_flight"}, status=409
                     )
@@ -7514,8 +7576,7 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
                     # guard below.
                     teardown_incomplete = True
                 elif not reset_ok:
-                    slot.workspace = prior_workspace
-                    slot.project = prior_project
+                    _rollback()
                     return web.json_response(
                         {"error": "a turn is in flight", "code": "turn_in_flight"}, status=409
                     )
@@ -7527,12 +7588,21 @@ async def api_chat_slot_workspace(request: web.Request) -> web.Response:
             # committed bindings would describe a session that never saw the
             # switch. Roll back and answer 409; the retry resolves the
             # current binding.
-            slot.workspace = prior_workspace
-            slot.project = prior_project
+            _rollback()
             return web.json_response(
                 {"error": "slot session was rebound during the switch", "code": "session_rebound"},
                 status=409,
             )
+        # Mark for the periodic flush (GPT review finding): the flush writes a
+        # slot's metadata line only while ``_dirty`` is set, and nothing else
+        # on this path sets it. On main that was harmless -- the message-count
+        # refusal meant only an EMPTY slot ever got here, and the flush skips
+        # a slot with no messages anyway. With the switch allowed on a started
+        # conversation, a gateway crash before the next message would restore
+        # the OLD workspace/project over a switch the user saw succeed. The
+        # remote-peer branch persists through ``_apply_remote_pick`` and the
+        # same-value no-op changes nothing, so neither needs this.
+        slot._dirty = True
     state.push_slots_update()
     ws_resp: dict = {"ok": True, "workspace": ws_name}
     if teardown_incomplete:
