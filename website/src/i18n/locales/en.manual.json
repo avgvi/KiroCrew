@@ -5668,6 +5668,10 @@
       "retry": "Retry",
       "back_to_apps": "Back to Apps",
       "failed_to_load_app": "Failed to load app"
+    },
+    "contextBreakdown": {
+      "block_loaded_skill_trigger": "Skill (matched trigger word)",
+      "block_loaded_skill_dollar": "Skill (typed $name)"
     }
   },
   "privacyDisclosure": {

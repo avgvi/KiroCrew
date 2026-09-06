@@ -10075,7 +10075,9 @@
       "title": "Ripartizione del contesto",
       "total_credits_title": "Crediti sui turni tracciati",
       "turn_credits_duration_title": "{{credits}} crediti · {{duration}} in questo turno",
-      "turn_credits_title": "{{credits}} crediti in questo turno"
+      "turn_credits_title": "{{credits}} crediti in questo turno",
+      "block_loaded_skill_trigger": "Skill (parola trigger)",
+      "block_loaded_skill_dollar": "Skill (digitata con $nome)"
     },
     "devFleetPage": {
       "actions": "Azioni",

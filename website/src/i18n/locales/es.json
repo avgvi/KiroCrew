@@ -10075,7 +10075,9 @@
       "title": "Desglose del contexto",
       "total_credits_title": "Créditos en los turnos registrados",
       "turn_credits_duration_title": "{{credits}} créditos · {{duration}} en este turno",
-      "turn_credits_title": "{{credits}} créditos en este turno"
+      "turn_credits_title": "{{credits}} créditos en este turno",
+      "block_loaded_skill_trigger": "Habilidad (palabra desencadenante)",
+      "block_loaded_skill_dollar": "Habilidad (escrita con $nombre)"
     },
     "devFleetPage": {
       "actions": "Acciones",

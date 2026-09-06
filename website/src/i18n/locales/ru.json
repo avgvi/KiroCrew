@@ -10221,7 +10221,9 @@
       "title": "Состав контекста",
       "total_credits_title": "Кредиты за отслеженные ходы",
       "turn_credits_duration_title": "{{credits}} кредитов · {{duration}} за этот ход",
-      "turn_credits_title": "{{credits}} кредитов за этот ход"
+      "turn_credits_title": "{{credits}} кредитов за этот ход",
+      "block_loaded_skill_trigger": "Навык (по слову-триггеру)",
+      "block_loaded_skill_dollar": "Навык (введён через $имя)"
     },
     "devFleetPage": {
       "actions": "Действия",

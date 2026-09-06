@@ -10075,7 +10075,9 @@
       "title": "Detalhamento do contexto",
       "total_credits_title": "Créditos nos turnos registrados",
       "turn_credits_duration_title": "{{credits}} créditos · {{duration}} neste turno",
-      "turn_credits_title": "{{credits}} créditos neste turno"
+      "turn_credits_title": "{{credits}} créditos neste turno",
+      "block_loaded_skill_trigger": "Skill (palavra-gatilho)",
+      "block_loaded_skill_dollar": "Skill (digitada com $nome)"
     },
     "devFleetPage": {
       "actions": "Ações",

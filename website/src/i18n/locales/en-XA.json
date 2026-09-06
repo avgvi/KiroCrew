@@ -9732,7 +9732,9 @@
       "title": "[Çøñţèẋţ Ɓŕèàķðøẁñ ···············]",
       "total_credits_title": "[Çŕèðìţş àçŕøşş ţĥè ţŕàçèð ţùŕñş ················]",
       "turn_credits_duration_title": "[{{credits}} çŕèðìţş · {{duration}} ţĥìş ţùŕñ ···············]",
-      "turn_credits_title": "[{{credits}} çŕèðìţş ţĥìş ţùŕñ ················]"
+      "turn_credits_title": "[{{credits}} çŕèðìţş ţĥìş ţùŕñ ················]",
+      "block_loaded_skill_trigger": "[Şķìĺĺ (ɱàţçĥèð ţŕìğğèŕ ẁøŕð) ····················]",
+      "block_loaded_skill_dollar": "[Şķìĺĺ (ţýþèð $ñàɱè) ·················]"
     },
     "devFleetPage": {
       "actions": "[Àçţìøñş ···········]",

@@ -9929,7 +9929,9 @@
       "title": "কনটেক্সট বিশ্লেষণ",
       "total_credits_title": "ট্রেস করা টার্নগুলির মোট ক্রেডিট",
       "turn_credits_duration_title": "এই টার্নে {{credits}} ক্রেডিট · {{duration}}",
-      "turn_credits_title": "এই টার্নে {{credits}} ক্রেডিট"
+      "turn_credits_title": "এই টার্নে {{credits}} ক্রেডিট",
+      "block_loaded_skill_trigger": "স্কিল (ট্রিগার শব্দে মিলেছে)",
+      "block_loaded_skill_dollar": "স্কিল ($নাম টাইপ করে)"
     },
     "devFleetPage": {
       "actions": "অ্যাকশন",

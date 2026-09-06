@@ -3664,6 +3664,7 @@ def _expand_dollar_skills(
     state: DashboardState,
     slot: _ChatSlot,
     session_key: str,
+    routes_out: dict[str, list[str]] | None = None,
 ) -> tuple[str, int]:
     """Expand ``$skillname`` tokens anywhere in *message* into appended skill bodies.
 
@@ -3718,8 +3719,14 @@ def _expand_dollar_skills(
     for _token, name, body in resolved:
         body, _ = redact_credentials(body)
         body, _ = redact_exfiltration_urls(body)
+        # Byte-identical ``[Skill: {name}]`` -- no in-text route token to forge
+        # (GPT #9096). The dollar route is recorded OUT-OF-BAND per OCCURRENCE
+        # (appended to this name's list), so a same-name double-load keeps both
+        # routes rather than overwriting; the classifier reads that map.
         blocks.append(f"[Skill: {name}]\n\n{body}")
         names.append(name)
+        if routes_out is not None:
+            routes_out.setdefault(name, []).append("dollar")
 
     expanded = message + "\n\n" + "\n\n---\n\n".join(blocks)
 
@@ -6955,6 +6962,12 @@ async def _run_chat(
                     metadata={"mention": original.split()[0], "slot": slot.key},
                 )
 
+        # Out-of-band skill->route map for the Context Breakdown panel. The
+        # emitters ($skill expansion here, trigger loading in build_message) fill
+        # it with the route they KNOW at emit time, so the classifier never has to
+        # recover a route from prompt text a skill body could forge (GPT #9096).
+        _skill_routes: dict[str, list[str]] = {}
+
         # ── $skill expansion: resolve $name tokens anywhere → append skill body ──
         # Operates ONLY on the user's typed message, never on @prompt-substituted
         # content: `prompt_expanded` is True when an @prompt body replaced `message`
@@ -6972,7 +6985,7 @@ async def _run_chat(
             # rather than introducing it, so the fix is to move the whole call
             # off the loop instead of narrowing what it may discover.
             message, _n_skills = await asyncio.to_thread(
-                _expand_dollar_skills, message, state, slot, session_key
+                _expand_dollar_skills, message, state, slot, session_key, _skill_routes
             )
             if _n_skills:
                 sel().log_tool_invocation(
@@ -7225,6 +7238,7 @@ async def _run_chat(
                     prompt_expanded=prompt_expanded,
                 ),
                 user_span_out=_user_span,
+                skill_routes_out=_skill_routes,
                 needs_reinjection=_needs_reinjection,
             )
             # The reported span is valid for the message as build_message
@@ -7327,6 +7341,7 @@ async def _run_chat(
                 user_chars=attributable_user_chars(user_typed_len, prompt_expanded=prompt_expanded),
                 user_offset=_user_prepend_offset,
                 user_span=_span_arg,
+                skill_routes=_skill_routes,
             )
             slot_ctx_phase = PHASE_SESSION_START if is_new else PHASE_PER_TURN
             # Named rather than counted: naming only four blocks by hand

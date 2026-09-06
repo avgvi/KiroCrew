@@ -3089,6 +3089,7 @@ class ContextBuilder:
         model_window: int | None = None,
         user_text_range: tuple[int, int] | None = None,
         user_span_out: list[int] | None = None,
+        skill_routes_out: dict[str, list[str]] | None = None,
         needs_reinjection: bool = False,
         context_groups: frozenset[str] | None = None,
         member: str = "",
@@ -3634,7 +3635,16 @@ class ContextBuilder:
                     content = self.skills.load_skill(name, project)
                     if content:
                         stripped = self.skills.strip_frontmatter(content)
+                        # Byte-identical ``[Skill: {name}]`` -- no in-text route
+                        # token, so a skill BODY cannot forge one (GPT #9096). The
+                        # route is OUT-OF-BAND: recorded per OCCURRENCE (appended
+                        # to this name's list in emit order), never re-parsed from
+                        # text and never keyed by name alone -- so the same skill
+                        # loaded by two routes in one turn records BOTH, and the
+                        # second does not overwrite the first (GPT #9096 F1).
                         parts.append(f"[Skill: {name}]\n{stripped}\n[End of skill]\n\n")
+                        if skill_routes_out is not None:
+                            skill_routes_out.setdefault(name, []).append("trigger")
                         # Record use only when the body is actually delivered --
                         # a trigger match that never reaches the prompt (false
                         # positive, pointer-only, or undelivered) must not earn

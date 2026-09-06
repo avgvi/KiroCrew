@@ -371,6 +371,12 @@ html:lang(ko) {
      any accent) rather than a saturated slop-gradient; the long-tail unknown
      sources fall to a neutral mute. */
   --ctx-src-skill:color-mix(in srgb, #00c48f 74%, var(--card));
+  /* Two shade STEPS of the skill hue for the route-split loaded-skill rows
+     (trigger-loaded vs $skill-loaded). Same family as --ctx-src-skill, nudged
+     toward the text / toward the card so each of the three skill rows is
+     locatable in a composition bar rather than three identical swatches. */
+  --ctx-src-skill-trigger:color-mix(in srgb, var(--ctx-src-skill) 72%, var(--text));
+  --ctx-src-skill-dollar:color-mix(in srgb, var(--ctx-src-skill) 60%, var(--card));
   --ctx-src-memory:color-mix(in srgb, #4aa8ff 74%, var(--card));
   --ctx-src-history:color-mix(in srgb, #f2c14e 74%, var(--card));
   --ctx-src-lessons:color-mix(in srgb, #ff9d5c 74%, var(--card));

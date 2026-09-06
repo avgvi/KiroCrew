@@ -9929,7 +9929,9 @@
       "title": "Kontextaufschlüsselung",
       "total_credits_title": "Guthaben über die erfassten Züge",
       "turn_credits_duration_title": "{{credits}} Guthaben · {{duration}} in diesem Zug",
-      "turn_credits_title": "{{credits}} Guthaben in diesem Zug"
+      "turn_credits_title": "{{credits}} Guthaben in diesem Zug",
+      "block_loaded_skill_trigger": "Skill (Triggerwort erkannt)",
+      "block_loaded_skill_dollar": "Skill (per $Name eingegeben)"
     },
     "devFleetPage": {
       "actions": "Aktionen",

@@ -10075,7 +10075,9 @@
       "title": "Répartition du contexte",
       "total_credits_title": "Crédits sur les tours tracés",
       "turn_credits_duration_title": "{{credits}} crédits · {{duration}} pour ce tour",
-      "turn_credits_title": "{{credits}} crédits pour ce tour"
+      "turn_credits_title": "{{credits}} crédits pour ce tour",
+      "block_loaded_skill_trigger": "Compétence (mot déclencheur)",
+      "block_loaded_skill_dollar": "Compétence (saisie via $nom)"
     },
     "devFleetPage": {
       "actions": "Actions",

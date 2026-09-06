@@ -15,6 +15,13 @@
 /** Label -> CSS var. Absent labels fall to the mute. */
 const SOURCE_HUE: Record<string, string> = {
   loaded_skill: 'var(--ctx-src-skill)',
+  // Route-refined skill blocks read as the SAME family as `loaded_skill` (they
+  // are all a fully-loaded skill body) but each gets its own shade STEP of the
+  // skill hue, mixed toward the card / toward the text, so a reader can locate
+  // each row in the composition bar rather than seeing three identical swatches.
+  // Same family, distinguishable member -- the WATCH the UX review raised.
+  loaded_skill_trigger: 'var(--ctx-src-skill-trigger)',
+  loaded_skill_dollar: 'var(--ctx-src-skill-dollar)',
   memory: 'var(--ctx-src-memory)',
   semantic_memory: 'var(--ctx-src-memory)',
   episodic_memory: 'var(--ctx-src-memory)',

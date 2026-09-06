@@ -9783,7 +9783,9 @@
       "title": "컨텍스트 분석",
       "total_credits_title": "추적된 턴 전체의 크레딧",
       "turn_credits_duration_title": "이 턴에서 {{credits}} 크레딧 · {{duration}}",
-      "turn_credits_title": "이 턴에서 {{credits}} 크레딧"
+      "turn_credits_title": "이 턴에서 {{credits}} 크레딧",
+      "block_loaded_skill_trigger": "스킬 (트리거 단어 일치)",
+      "block_loaded_skill_dollar": "스킬 ($이름 입력)"
     },
     "devFleetPage": {
       "actions": "작업",

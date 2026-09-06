@@ -9929,7 +9929,9 @@
       "title": "संदर्भ विश्लेषण",
       "total_credits_title": "ट्रेस किए गए टर्न का कुल क्रेडिट",
       "turn_credits_duration_title": "इस टर्न में {{credits}} क्रेडिट · {{duration}}",
-      "turn_credits_title": "इस टर्न में {{credits}} क्रेडिट"
+      "turn_credits_title": "इस टर्न में {{credits}} क्रेडिट",
+      "block_loaded_skill_trigger": "स्किल (ट्रिगर शब्द से मिली)",
+      "block_loaded_skill_dollar": "स्किल ($नाम से टाइप की)"
     },
     "devFleetPage": {
       "actions": "कार्रवाइयां",

@@ -71,6 +71,8 @@ const BLOCK_KEY: Record<string, string> = {
   skill_index: 'pages.contextBreakdown.block_skill_index',
   skill_hint: 'pages.contextBreakdown.block_skill_hint',
   loaded_skill: 'pages.contextBreakdown.block_loaded_skill',
+  loaded_skill_trigger: 'pages.contextBreakdown.block_loaded_skill_trigger',
+  loaded_skill_dollar: 'pages.contextBreakdown.block_loaded_skill_dollar',
   critical_rules: 'pages.contextBreakdown.block_critical_rules',
   [EVERY_TURN_KEY]: 'pages.contextBreakdown.block_every_turn',
   unclassified: 'pages.contextBreakdown.block_unclassified',

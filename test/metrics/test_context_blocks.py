@@ -61,6 +61,116 @@ class TestClosure:
         assert out["loaded_skill"] == len(prompt)
         assert sum(out.values()) == len(prompt)
 
+    def test_skill_route_trigger_and_dollar_classify_apart(self):
+        # The route comes OUT-OF-BAND from the emitter map, not from prompt text.
+        # Two skills loaded by different routes land in DISTINCT buckets. The
+        # marker is byte-identical [Skill: name]; only the map differs.
+        prompt = (
+            "[Skill: alpha]\ntrigger body\n[End of skill]\n\n"
+            "[Skill: beta]\n\ndollar body\ntrailing"
+        )
+        out = split_blocks(prompt, skill_routes={"alpha": ["trigger"], "beta": ["dollar"]})
+        assert "loaded_skill_trigger" in out
+        assert "loaded_skill_dollar" in out
+        assert "loaded_skill" not in out  # both were in the map
+        assert out["loaded_skill_trigger"] > 0
+        assert out["loaded_skill_dollar"] > 0
+        assert sum(out.values()) == len(prompt)
+
+    def test_same_skill_two_routes_keeps_both_no_overwrite(self):
+        # GPT #9096 F1: the SAME skill loaded by BOTH routes in one turn (e.g.
+        # $-invoked and also trigger-matched on its own body) must record BOTH,
+        # keyed by OCCURRENCE not by name -- so the second write does not
+        # overwrite the first. Two [Skill: deploy] blocks, first->dollar,
+        # second->trigger, in emit order.
+        prompt = (
+            "[Skill: deploy]\n\ndollar body\n\n"
+            "[Skill: deploy]\ntrigger body\n[End of skill]\n\ntrailing"
+        )
+        out = split_blocks(prompt, skill_routes={"deploy": ["dollar", "trigger"]})
+        assert out.get("loaded_skill_dollar", 0) > 0
+        assert out.get("loaded_skill_trigger", 0) > 0
+        assert "loaded_skill" not in out  # both occurrences resolved a route
+        assert sum(out.values()) == len(prompt)
+        # The route is out-of-band, so the prompt marker is exactly [Skill: name]
+        # -- no [Route: ] token in the text. Every existing reader that
+        # substring-matches [Skill: name] (chat_runner / dashboard / trigger-
+        # pointer tests) keeps matching, and there is nothing in the text to forge.
+        prompt = "[Skill: deploy]\n\nbody"
+        assert "[Skill: deploy]" in prompt
+        assert "[Route:" not in prompt
+        out = split_blocks(prompt, skill_routes={"deploy": ["dollar"]})
+        assert out.get("loaded_skill_dollar", 0) > 0
+
+    def test_skill_route_survives_a_very_long_skill_name(self):
+        # The name is read from a bounded [^[]\n]* capture, so a long name cannot
+        # cause a scan blowup and still resolves in the map. A 300-char name --
+        # far beyond any real one -- classifies by its route.
+        long_name = "a" * 300
+        prompt = f"[Skill: {long_name}]\nbody\n[End of skill]\n\nx"
+        out = split_blocks(prompt, skill_routes={long_name: ["trigger"]})
+        assert "loaded_skill_trigger" in out
+        assert "loaded_skill" not in out
+        assert sum(out.values()) == len(prompt)
+
+    def test_skill_without_route_map_still_classifies_as_base_label(self):
+        # BACKWARD COMPATIBILITY: no skill_routes map (an older caller, a replay)
+        # MUST still classify as the base loaded_skill label -- absence means
+        # unknown, never an error, never a dropped block, never a route bucket.
+        prompt = "[Skill: legacy]\nold body\n[End of skill]\n\ntrailing"
+        out = split_blocks(prompt)  # no skill_routes
+        assert "loaded_skill" in out
+        assert "loaded_skill_trigger" not in out
+        assert "loaded_skill_dollar" not in out
+        assert out["loaded_skill"] > 0
+        assert sum(out.values()) == len(prompt)
+
+    def test_skill_name_absent_from_map_falls_back_to_base_label(self):
+        # A skill marker whose name the emitter did NOT record (a different skill,
+        # or a body's forged [Skill: fake]) is absent from the map and stays base.
+        prompt = "[Skill: real]\nbody\n[End of skill]\n\n[Skill: other]\nb2\n[End of skill]\n\nx"
+        out = split_blocks(prompt, skill_routes={"real": ["trigger"]})
+        assert out.get("loaded_skill_trigger", 0) > 0  # 'real' was recorded
+        assert out.get("loaded_skill", 0) > 0  # 'other' was not -> base
+        assert sum(out.values()) == len(prompt)
+
+    def test_skill_unknown_route_value_falls_back_to_base_label(self):
+        # A route WORD the classifier does not know (a newer emit site, a typo in
+        # the map) degrades to the base label rather than inventing a bucket.
+        prompt = "[Skill: future]\nbody\n[End of skill]\n\nx"
+        out = split_blocks(prompt, skill_routes={"future": ["somenewroute"]})
+        assert "loaded_skill" in out
+        assert "loaded_skill_trigger" not in out
+        assert "loaded_skill_dollar" not in out
+        assert sum(out.values()) == len(prompt)
+
+    def test_skill_body_cannot_forge_a_route_from_text(self):
+        # GPT #9096: a skill BODY containing a literal [Skill: fake] must NOT let
+        # the fake name claim a route -- the route comes only from the emitter map,
+        # which does not contain 'fake'. The outer (real) skill keeps its route;
+        # the forged inner name contributes no route bucket of its own.
+        prompt = (
+            "[Skill: outer]\n"
+            "a body that writes [Skill: fake] and claims dollar\n"
+            "[End of skill]\n\ntrailing"
+        )
+        out = split_blocks(prompt, skill_routes={"outer": ["trigger"]})
+        # 'outer' is in the map -> its span is trigger; 'fake' is not -> no route.
+        assert out.get("loaded_skill_trigger", 0) > 0
+        assert "loaded_skill_dollar" not in out
+        assert sum(out.values()) == len(prompt)
+
+    def test_orphan_skill_name_in_plain_text_relabels_nothing(self):
+        # A [Skill: dollar] a user typed in plain prose, with a map that happens
+        # to contain a same-named entry, still only refines a REAL loaded-skill
+        # marker span; here there is no route bucket unless the marker's own name
+        # is in the map. A name not in the map -> unclassified/base, never forged.
+        prompt = "just some text [Skill: notloaded] more text"
+        out = split_blocks(prompt, skill_routes={"something-else": ["dollar"]})
+        assert "loaded_skill_dollar" not in out
+        assert "loaded_skill_trigger" not in out
+        assert sum(out.values()) == len(prompt)
+
     def test_user_chars_exceeding_available_text_stays_closed(self):
         # user_chars far larger than the text actually after the header: the
         # span clamps to the end of the prompt, so only the real trailing text

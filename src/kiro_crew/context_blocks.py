@@ -20,11 +20,36 @@ the point of the breakdown — an exact unit beats an approximate one.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 # Label for the user's own text, and for the remainder we could not attribute.
 USER_LABEL: Final = "your_message"
 UNCLASSIFIED_LABEL: Final = "unclassified"
+
+# The route a loaded skill was loaded by -- the trigger-word matcher
+# (kiro_crew.context) or ``$skill`` expansion (dashboard.chat_runner) -- is
+# carried OUT-OF-BAND: the emitter, which knows the route at emit time, records
+# ``{skill_name: route}`` and hands it to :func:`split_blocks` as ``skill_routes``.
+# It is NEVER recovered from the prompt text, because a skill BODY can contain
+# arbitrary ``[Skill: ...]`` text and would otherwise forge a route (GPT #9096).
+# The emitted marker is a byte-identical ``[Skill: {name}]`` with no route token,
+# so every reader that substring-matches ``[Skill: name]`` keeps matching.
+#
+# The base ``loaded_skill`` label is used for a skill marker whose name is NOT in
+# the emitter-owned map -- an older prompt with no map, a body's forged
+# ``[Skill: fake]``, or a future emit site that has not opted in -- so absence is
+# the base label and the refinement is purely additive.
+LOADED_SKILL_LABEL: Final = "loaded_skill"
+_LOADED_SKILL_ROUTE_LABEL: Final[dict[str, str]] = {
+    "trigger": "loaded_skill_trigger",
+    "dollar": "loaded_skill_dollar",
+}
+# Captures the NAME out of a ``[Skill: <name>]`` marker to look the route up in
+# the emitter-owned map. The name class ``[^\[\]\n]*`` stops at the first ``[``,
+# ``]`` or newline, so a crafted ``[Skill: `` flood fails each attempt in O(1) --
+# NOT the O(n^2) that ``[^\]\n]*`` (which scans past an inner ``[``) would cause.
+_SKILL_NAME_RE: Final = re.compile(r"\[Skill: ([^\[\]\n]*)\]")
 
 # Ordered (label, opening-marker) pairs. A block owns the span from its marker
 # up to the next marker's start, mirroring how the assembly concatenates them.
@@ -169,6 +194,7 @@ def split_blocks(
     user_chars: int = 0,
     user_offset: int = 0,
     user_span: tuple[int, int] | None = None,
+    skill_routes: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, int]:
     """Attribute ``prompt``'s characters to the block that produced them.
 
@@ -199,10 +225,42 @@ def split_blocks(
     if not prompt:
         return {}
 
+    # Precompute, per skill-marker START position, its route-refined label from
+    # the OUT-OF-BAND emitter map. The map is ``{name: [route, ...]}`` in emit
+    # order, so the k-th ``[Skill: name]`` occurrence (in document/scan order)
+    # takes the k-th recorded route for that name -- a same-skill double-load
+    # keeps BOTH routes rather than one overwriting the other (GPT #9096 F1).
+    # One linear pass; the name capture ``[^\[\]\n]*`` stops at the first ``[`` so
+    # a crafted ``[Skill: `` flood fails each attempt in O(1). A name the emitter
+    # never recorded -- an older prompt with no map, or a body's forged
+    # ``[Skill: fake]`` -- is absent and keeps the base label, so a skill body
+    # cannot forge a route (GPT #9096).
+    skill_label_at: dict[int, str] = {}
+    if skill_routes:
+        _seen_per_name: dict[str, int] = {}
+        for m in _SKILL_NAME_RE.finditer(prompt):
+            name = m.group(1)
+            routes = skill_routes.get(name)
+            if not routes:
+                continue
+            occurrence = _seen_per_name.get(name, 0)
+            _seen_per_name[name] = occurrence + 1
+            if occurrence < len(routes):
+                refined = _LOADED_SKILL_ROUTE_LABEL.get(routes[occurrence])
+                if refined is not None:
+                    skill_label_at[m.start()] = refined
+
     hits: list[tuple[int, str]] = []
     for label, pattern in _COMPILED:
         for match in pattern.finditer(prompt):
-            hits.append((match.start(), label))
+            hit_label = label
+            if label == LOADED_SKILL_LABEL:
+                # Refine to a route-specific label only when the emitter recorded a
+                # route for THIS marker occurrence (built above). No entry -> base
+                # label. The route never comes from prompt text, so a body cannot
+                # forge it.
+                hit_label = skill_label_at.get(match.start(), label)
+            hits.append((match.start(), hit_label))
 
     # The user's own text is the one span of the prompt an attacker controls, so
     # its bounds must come from something they cannot influence. `user_chars` is
@@ -278,6 +336,12 @@ def split_blocks(
         # wrapper (whose nested blocks open before it closes) behaving as before.
         end = next_start
         closer = _CLOSERS.get(label)
+        if closer is None and label in _LOADED_SKILL_ROUTE_LABEL.values():
+            # A route-refined skill label shares the base skill's closer
+            # (``[End of skill]``). The trigger route emits that closer and finds
+            # it here; the dollar route emits none and falls through to the next
+            # marker exactly as the un-refined ``loaded_skill`` block did before.
+            closer = _CLOSERS.get(LOADED_SKILL_LABEL)
         if closer is not None:
             # The LAST match before the next opener, not the first. A block's
             # content can quote its own closer — a custom agent prompt that
