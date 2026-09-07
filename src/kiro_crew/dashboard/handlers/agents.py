@@ -1785,23 +1785,24 @@ def _advertised_cc_models(request: web.Request) -> list[dict]:
     except (KeyError, AttributeError):
         return []
     for provider in providers:
-        getter = getattr(provider, "available_models", None)
-        if not callable(getter):
-            continue
-        try:
-            advertised = getter()
-        except Exception:
-            continue
-        if advertised:
-            return [
-                {
-                    "model_name": m.get("modelId", ""),
-                    "display_name": m.get("name", "") or m.get("modelId", ""),
-                    "description": m.get("description", ""),
-                }
-                for m in advertised
-                if m.get("modelId")
-            ]
+        if provider.is_claude_backend:
+            getter = getattr(provider, "available_models", None)
+            if not callable(getter):
+                continue
+            try:
+                advertised = getter()
+            except Exception:
+                continue
+            if advertised:
+                return [
+                    {
+                        "model_name": m.get("modelId", ""),
+                        "display_name": m.get("name", "") or m.get("modelId", ""),
+                        "description": m.get("description", ""),
+                    }
+                    for m in advertised
+                    if m.get("modelId")
+                ]
     return []
 
 
@@ -1952,13 +1953,18 @@ def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]
         ]
 
     merged: list[dict] = []
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
     for entry in (*registry_rows, *advertised):
         name = entry.get("model_name", "")
         key = _normalize_model_key(name)
-        if not key or key in seen:
+        if not key:
             continue
-        seen.add(key)
+        if key in seen:
+            # Collision: registry keeps display, advertised id keeps the wire value.
+            if key != "auto":
+                merged[seen[key]] = {**merged[seen[key]], "model_name": name}
+            continue
+        seen[key] = len(merged)
         merged.append(entry)
     # "auto" leads. It may be absent entirely if a future registry drops the row,
     # so synthesize it rather than assuming the filter above preserved one.
@@ -1967,7 +1973,7 @@ def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]
     ]
     if not any(_normalize_model_key(e.get("model_name", "")) == "auto" for e in merged):
         merged.insert(0, {"model_name": "auto", "display_name": "Auto", "description": ""})
-        seen.add("auto")
+        seen = {_normalize_model_key(e.get("model_name", "")): i for i, e in enumerate(merged)}
     # Guarantee the configured default is present (e.g. a custom cc_model the
     # backend doesn't advertise) so the selected model never vanishes. Resolve it
     # to its canonical key first (it may be stored as a provider id or alias) so a
@@ -2039,7 +2045,7 @@ def _wrap_list_models_argv(argv: list[str]) -> tuple[list[str], str | None]:
 
 async def api_models(request: web.Request) -> web.Response:
     """GET /api/models — list available models from the live kiro-cli ACP session or the claude-code ACP adapter."""
-    cfg = KiroCrewConfig.load()
+    cfg = await asyncio.to_thread(KiroCrewConfig.load)
     if getattr(cfg.agent, "acp_backend", "") == ACP_BACKEND_CLAUDE:
         return web.json_response(_cc_models(request, configured_default=cfg.agent.model))
     # Signed-out gateways must never reach the spawn below. kiro-cli auto-opens

@@ -246,10 +246,13 @@ def test_cc_models_serves_harvested_catalog_with_verbatim_wire_ids(tmp_path: Pat
     from unittest.mock import MagicMock
 
     from kiro_crew.dashboard.handlers.agents import _cc_models
+    from kiro_crew.providers.acp import AcpProvider
 
     client = AcpClient(work_dir=tmp_path, acp_backend=ACP_BACKEND_CLAUDE)
     client._capture_available_models(SESSION_NEW_RESPONSE)
-    provider = SimpleNamespace(available_models=client.available_models)
+    provider = MagicMock(spec=AcpProvider)
+    provider.is_claude_backend = True
+    provider.available_models.return_value = client.available_models()
     state = SimpleNamespace(sessions=SimpleNamespace(active_providers=lambda: [provider]))
     request = MagicMock()
     request.app.__getitem__.return_value = state
@@ -260,6 +263,7 @@ def test_cc_models_serves_harvested_catalog_with_verbatim_wire_ids(tmp_path: Pat
     assert "us.anthropic.claude-opus-5[1m]" in names
     assert "us.anthropic.claude-fable-5-1" in names
     assert "haiku" in names
+    assert "sonnet" in names
 
 
 def test_cc_models_falls_back_to_registry_without_a_session(tmp_path: Path):
