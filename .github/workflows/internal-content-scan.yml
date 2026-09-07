@@ -22,7 +22,7 @@ on:
   workflow_call:
     secrets:
       KIRO_RELEASE_GATE_ROLE_ARN:
-        description: Read-only role to assume. Org-level secret; pass secrets:inherit.
+        description: Read-only role to assume. Pass it explicitly from the caller, not via secrets:inherit.
         required: true
       KIRO_RELEASE_GATE_BUCKET:
         description: Bucket holding the ruleset. Org-level secret, so the account id stays out of public YAML.

@@ -22,4 +22,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    secrets: inherit
+    # Named explicitly rather than `secrets: inherit`, which would hand the scan
+    # every secret this repository holds — signing roles, webhooks — when it needs
+    # two identifiers. Neither of these is a credential.
+    secrets:
+      KIRO_RELEASE_GATE_ROLE_ARN: ${{ secrets.KIRO_RELEASE_GATE_ROLE_ARN }}
+      KIRO_RELEASE_GATE_BUCKET: ${{ secrets.KIRO_RELEASE_GATE_BUCKET }}
