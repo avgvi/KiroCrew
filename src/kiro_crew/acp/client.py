@@ -3861,7 +3861,10 @@ class AcpClient:
         """
         models = session_resp.get("models")
         if not isinstance(models, dict):
-            return
+            # Adapters that omit `models` still advertise via configOptions.
+            models = self._models_from_config_options(session_resp)
+            if models is None:
+                return
         current_model_id = models.get("currentModelId")
         if isinstance(current_model_id, str) and current_model_id:
             self._resolved_model_id = current_model_id
@@ -3894,6 +3897,33 @@ class AcpClient:
                 self._advertised_models_changed = model_registry.refresh_advertised_models(
                     self._model_registry_namespace, self._advertised_model_ids()
                 )
+
+    def _models_from_config_options(self, session_resp: dict) -> dict | None:
+        """Synthesize a ``models`` envelope from a configOptions model select, or None."""
+        if not self._uses_advertised_model_selection:
+            return None
+        for opt in session_resp.get("configOptions") or []:
+            if isinstance(opt, dict) and opt.get("id") == "model" and opt.get("type") == "select":
+                options = [
+                    o for o in opt.get("options") or [] if isinstance(o, dict) and o.get("value")
+                ]
+                if not options:
+                    return None
+                envelope: dict = {
+                    "availableModels": [
+                        {
+                            "modelId": o["value"],
+                            "name": o.get("name") or o["value"],
+                            "description": o.get("description") or "",
+                        }
+                        for o in options
+                    ]
+                }
+                current = opt.get("currentValue")
+                if isinstance(current, str) and current:
+                    envelope["currentModelId"] = current
+                return envelope
+        return None
 
     async def _persist_advertised_models_if_changed(self) -> None:
         """Offload a disk persist of the provider-model cache when it changed.

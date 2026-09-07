@@ -20,7 +20,7 @@ from aiohttp import BodyPartReader, web
 
 from kiro_crew import agent_state, model_registry
 from kiro_crew.acp.client import advertised_model_ids, model_is_unusable
-from kiro_crew.acp_backends import selectable_backend_values
+from kiro_crew.acp_backends import ACP_BACKEND_CLAUDE, selectable_backend_values
 from kiro_crew.agent import (
     AGENT_FILENAME,
     _spec_path_is_safe,
@@ -1774,11 +1774,9 @@ def _advertised_cc_models(request: web.Request) -> list[dict]:
     """Map the first active CC provider's advertised models to the API shape.
 
     claude-agent-acp captures its real versioned list at session init (see
-    AcpClient._capture_available_models). Backend provider ids are mapped back to
-    canonical registry keys (``from_provider_id``) so they dedup cleanly against
-    the registry rows in :func:`_cc_models` and the wire value stays canonical.
-    A provider id with no registry entry passes through unchanged (forward-compat
-    for models the registry doesn't list yet). Returns ``[]`` when no session has
+    AcpClient._capture_available_models). ``model_name`` is the advertised id
+    verbatim: it is the wire value sent back on selection, and the adapter
+    only accepts ids it advertised. Returns ``[]`` when no session has
     initialized or the backend advertised nothing.
     """
     try:
@@ -1797,9 +1795,7 @@ def _advertised_cc_models(request: web.Request) -> list[dict]:
         if advertised:
             return [
                 {
-                    "model_name": model_registry.from_provider_id(
-                        m.get("modelId", ""), "claude_code"
-                    ),
+                    "model_name": m.get("modelId", ""),
                     "display_name": m.get("name", "") or m.get("modelId", ""),
                     "description": m.get("description", ""),
                 }
@@ -2042,7 +2038,10 @@ def _wrap_list_models_argv(argv: list[str]) -> tuple[list[str], str | None]:
 
 
 async def api_models(request: web.Request) -> web.Response:
-    """GET /api/models — list available models from the live kiro-cli ACP session."""
+    """GET /api/models — list available models from the live kiro-cli ACP session or the claude-code ACP adapter."""
+    cfg = KiroCrewConfig.load()
+    if getattr(cfg.agent, "acp_backend", "") == ACP_BACKEND_CLAUDE:
+        return web.json_response(_cc_models(request, configured_default=cfg.agent.model))
     # Signed-out gateways must never reach the spawn below. kiro-cli auto-opens
     # an interactive browser login for ANY subcommand run unauthenticated
     # (--no-interactive does not suppress it, and there is no opt-out env var),

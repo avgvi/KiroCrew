@@ -63,9 +63,8 @@ class TestAdvertisedCcModels:
             }
         ]
 
-    def test_known_provider_id_mapped_to_canonical_key(self):
-        # A backend provider id that IS in the registry maps back to its
-        # canonical key so it dedups against the registry rows.
+    def test_known_provider_id_kept_verbatim(self):
+        # The advertised id is the value set_config_option accepts.
         prov = _FakeProvider(
             [
                 {
@@ -76,7 +75,7 @@ class TestAdvertisedCcModels:
             ]
         )
         out = _advertised_cc_models(_request_with_providers({"s": prov}))
-        assert out[0]["model_name"] == "opus-4.8-1m"
+        assert out[0]["model_name"] == "global.anthropic.claude-opus-4-8[1m]"
 
     def test_empty_when_no_active_sessions(self):
         assert _advertised_cc_models(_request_with_providers({})) == []
