@@ -34,4 +34,11 @@ describe('AgentCfgTab', () => {
       expect(api.saveAgentConfig).toHaveBeenCalled()
     })
   })
+
+  it('renders the save hint as the whole paragraph', () => {
+    render(<AgentCfgTab />, { wrapper: Wrapper })
+    const hint = screen.getByText('After saving, use')
+    expect(hint.tagName).toBe('P')
+    expect(hint.innerHTML).toBe('After saving, use')
+  })
 })
