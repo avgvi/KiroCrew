@@ -10935,7 +10935,6 @@
         "workflow_description": "설명"
       },
       "agentCfgTab": {
-        "after_saving_use": "저장한 후",
         "agent_config_file": "에이전트 설정 ({{file}})",
         "agent_config_json": "에이전트 설정 JSON",
         "agent_config_tip": "{{process}} 에이전트 정의 — 프롬프트, 도구, MCP 서버, 모델 설정. {{productName}}의 운영 바인딩과는 별개인 실행 계층 설정입니다.",

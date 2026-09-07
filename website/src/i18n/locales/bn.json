@@ -11096,7 +11096,6 @@
         "workflow_description": "বিবরণ"
       },
       "agentCfgTab": {
-        "after_saving_use": "সেভ করার পরে, ব্যবহার করুন",
         "agent_config_file": "এজেন্ট কনফিগ ({{file}})",
         "agent_config_json": "এজেন্ট কনফিগ JSON",
         "agent_config_tip": "{{process}} এজেন্ট সংজ্ঞা — প্রম্পট, টুল, MCP সার্ভার, মডেল সেটিংস। এটি এক্সিকিউশন লেয়ারের কনফিগ, {{productName}}-এর অপারেশনাল বাইন্ডিং থেকে পৃথক।",

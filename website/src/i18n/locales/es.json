@@ -11257,7 +11257,6 @@
         "workflow_description": "Descripción"
       },
       "agentCfgTab": {
-        "after_saving_use": "Después de guardar, usa",
         "agent_config_file": "Configuración del agente ({{file}})",
         "agent_config_json": "JSON de configuración del agente",
         "agent_config_tip": "La definición del agente {{process}}: prompt, herramientas, servidores MCP y ajustes del modelo. Esta es la configuración de la capa de ejecución, independiente de los enlaces operativos de {{productName}}.",

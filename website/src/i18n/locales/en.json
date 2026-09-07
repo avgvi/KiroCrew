@@ -7054,7 +7054,6 @@
     },
     "overview": {
       "agentCfgTab": {
-        "after_saving_use": "After saving, use",
         "agent_config_json": "Agent config JSON",
         "invalid_json": "Invalid JSON",
         "loading": "Loading…",

@@ -35,10 +35,9 @@ describe('AgentCfgTab', () => {
     })
   })
 
-  it('renders the save hint as the whole paragraph', () => {
+  it('puts the config editor directly under the card title', () => {
     render(<AgentCfgTab />, { wrapper: Wrapper })
-    const hint = screen.getByText('After saving, use')
-    expect(hint.tagName).toBe('P')
-    expect(hint.innerHTML).toBe('After saving, use')
+    const title = screen.getByRole('heading', { level: 3 })
+    expect(title.nextElementSibling).toBe(screen.getByLabelText('Agent config JSON'))
   })
 })
